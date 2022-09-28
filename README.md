@@ -1,0 +1,1 @@
+# gorm oracle dialector
