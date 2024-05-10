@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +19,8 @@ import (
 	"gorm.io/gorm/migrator"
 	"gorm.io/gorm/schema"
 )
+
+const RowNumberAliasForOracle11 = "ROW_NUM"
 
 type Config struct {
 	DriverName        string
@@ -51,7 +52,11 @@ func (d Dialector) Name() string {
 }
 
 func (d Dialector) Initialize(db *gorm.DB) (err error) {
-	db.NamingStrategy = Namer{db.NamingStrategy.(schema.NamingStrategy)}
+
+	db.NamingStrategy = Namer{
+		NamingStrategy: db.NamingStrategy,
+		DBName:         d.DBName,
+	}
 	d.DefaultStringSize = 1024
 
 	// register callbacks
@@ -64,10 +69,15 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 
 	d.DriverName = "godror"
 
+	// godror.Batch
+
 	if d.Conn != nil {
 		db.ConnPool = d.Conn
 	} else {
 		db.ConnPool, err = sql.Open(d.DriverName, d.DSN)
+		if err != nil {
+			return
+		}
 	}
 	err = db.ConnPool.QueryRowContext(context.Background(), "select version from product_component_version where rownum = 1").Scan(&d.DBVer)
 	if err != nil {
@@ -96,7 +106,6 @@ func (d Dialector) ClauseBuilders() map[string]clause.ClauseBuilder {
 			"LIMIT": d.RewriteLimit,
 		}
 	}
-
 }
 
 func (d Dialector) RewriteLimit(c clause.Clause, builder clause.Builder) {
@@ -121,9 +130,14 @@ func (d Dialector) RewriteLimit(c clause.Clause, builder clause.Builder) {
 			builder.WriteString(strconv.Itoa(offset))
 			builder.WriteString(" ROWS")
 		}
-		if limit := limit.Limit; *limit > 0 {
+
+		v := 0
+		if limit.Limit != nil {
+			v = *limit.Limit
+		}
+		if v > 0 {
 			builder.WriteString(" FETCH NEXT ")
-			builder.WriteString(strconv.Itoa(*limit))
+			builder.WriteString(strconv.Itoa(v))
 			builder.WriteString(" ROWS ONLY")
 		}
 	}
@@ -131,34 +145,93 @@ func (d Dialector) RewriteLimit(c clause.Clause, builder clause.Builder) {
 
 // Oracle11 Limit
 func (d Dialector) RewriteLimit11(c clause.Clause, builder clause.Builder) {
-	if limit, ok := c.Expression.(clause.Limit); ok {
-		if stmt, ok := builder.(*gorm.Statement); ok {
-			limitsql := strings.Builder{}
-			if limit := limit.Limit; *limit > 0 {
-				if _, ok := stmt.Clauses["WHERE"]; !ok {
-					limitsql.WriteString(" WHERE ")
-				} else {
-					limitsql.WriteString(" AND ")
-				}
-				limitsql.WriteString("ROWNUM <= ")
-				limitsql.WriteString(strconv.Itoa(*limit))
-			}
-			if _, ok := stmt.Clauses["ORDER BY"]; !ok {
-				builder.WriteString(limitsql.String())
-			} else {
-				//  "ORDER BY" before  insert
-				sqltmp := strings.Builder{}
-				sqlold := stmt.SQL.String()
-				orderindx := strings.Index(sqlold, "ORDER BY") - 1
-				sqltmp.WriteString(sqlold[:orderindx])
-				sqltmp.WriteString(limitsql.String())
-				sqltmp.WriteString(sqlold[orderindx:])
-				log.Println(sqltmp.String())
-				stmt.SQL = sqltmp
-			}
-		}
+	limit, ok := c.Expression.(clause.Limit)
+	if !ok {
+		return
+	}
+	offsetRows := limit.Offset
+	hasOffset := offsetRows > 0
+	limitRows, hasLimit := d.getLimitRows(limit)
+	if !hasOffset && !hasLimit {
+		return
+	}
+
+	var stmt *gorm.Statement
+	if stmt, ok = builder.(*gorm.Statement); !ok {
+		return
+	}
+
+	if hasLimit && hasOffset {
+		subQuerySQL := fmt.Sprintf(
+			"SELECT * FROM (SELECT T.*, ROW_NUMBER() OVER (ORDER BY %s) AS %s FROM (%s) T) WHERE %s BETWEEN %d AND %d",
+			d.getOrderByColumns(stmt),
+			RowNumberAliasForOracle11,
+			strings.TrimSpace(stmt.SQL.String()),
+			RowNumberAliasForOracle11,
+			offsetRows+1,
+			offsetRows+limitRows,
+		)
+
+		stmt.SQL.Reset()
+		stmt.SQL.WriteString(subQuerySQL)
+	} else if hasLimit {
+		// 只有 Limit 的情况
+		subQuerySQL := fmt.Sprintf(
+			"SELECT * FROM (%s) WHERE ROWNUM <= %d",
+			strings.TrimSpace(stmt.SQL.String()),
+			limitRows,
+		)
+		// d.rewriteRownumStmt(stmt, builder, " <= ", limitRows)
+
+		stmt.SQL.Reset()
+		stmt.SQL.WriteString(subQuerySQL)
+	} else {
+		// 只有 Offset 的情况
+		// 偏移后取剩余所有记录
+		subQuerySQL := fmt.Sprintf(
+			"SELECT * FROM (SELECT T.*, ROW_NUMBER() OVER (ORDER BY %s) AS %s FROM (%s) T) WHERE %s > %d",
+			d.getOrderByColumns(stmt),
+			RowNumberAliasForOracle11,
+			strings.TrimSpace(stmt.SQL.String()),
+			RowNumberAliasForOracle11,
+			offsetRows+1,
+		)
+
+		stmt.SQL.Reset()
+		stmt.SQL.WriteString(subQuerySQL)
+
+		// d.rewriteRownumStmt(stmt, builder, " > ", offsetRows)
 	}
 }
+
+func (d Dialector) getOrderByColumns(stmt *gorm.Statement) string {
+	if orderByClause, ok := stmt.Clauses["ORDER BY"]; ok {
+		var orderBy clause.OrderBy
+		if orderBy, ok = orderByClause.Expression.(clause.OrderBy); ok && len(orderBy.Columns) > 0 {
+			orderByBuilder := strings.Builder{}
+			for i, column := range orderBy.Columns {
+				if i > 0 {
+					orderByBuilder.WriteString(", ")
+				}
+				orderByBuilder.WriteString(column.Column.Name)
+				if column.Desc {
+					orderByBuilder.WriteString(" DESC")
+				}
+			}
+			return orderByBuilder.String()
+		}
+	}
+	return "NULL"
+}
+
+func (d Dialector) getLimitRows(limit clause.Limit) (limitRows int, hasLimit bool) {
+	if l := limit.Limit; l != nil {
+		limitRows = *l
+		hasLimit = limitRows > 0
+	}
+	return
+}
+
 func (d Dialector) DefaultValueOf(*schema.Field) clause.Expression {
 	return clause.Expr{SQL: "VALUES (DEFAULT)"}
 }
@@ -181,7 +254,14 @@ func (d Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement, v inter
 }
 
 func (d Dialector) QuoteTo(writer clause.Writer, str string) {
-	writer.WriteString(str)
+	if str != "" && IsReservedWord(str) {
+		writer.WriteByte('"')
+		writer.WriteString(str)
+		writer.WriteByte('"')
+	} else {
+
+		writer.WriteString(str)
+	}
 }
 
 var numericPlaceholder = regexp.MustCompile(`:(\d+)`)
@@ -201,9 +281,7 @@ func (d Dialector) Explain(sql string, vars ...interface{}) string {
 }
 
 func (d Dialector) DataTypeOf(field *schema.Field) string {
-	if _, found := field.TagSettings["RESTRICT"]; found {
-		delete(field.TagSettings, "RESTRICT")
-	}
+	delete(field.TagSettings, "RESTRICT")
 
 	var sqlType string
 

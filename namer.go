@@ -1,12 +1,15 @@
 package oracle
 
 import (
-	"gorm.io/gorm/schema"
+	"fmt"
 	"strings"
+
+	"gorm.io/gorm/schema"
 )
 
 type Namer struct {
-	schema.NamingStrategy
+	NamingStrategy schema.Namer
+	DBName         string
 }
 
 func ConvertNameToFormat(x string) string {
@@ -14,7 +17,12 @@ func ConvertNameToFormat(x string) string {
 }
 
 func (n Namer) TableName(table string) (name string) {
-	return ConvertNameToFormat(n.NamingStrategy.TableName(table))
+	tableName := ConvertNameToFormat(n.NamingStrategy.TableName(table))
+	if len(n.DBName) > 0 {
+		return fmt.Sprintf("%s.%s", n.DBName, tableName)
+	}
+
+	return tableName
 }
 
 func (n Namer) ColumnName(table, column string) (name string) {
@@ -35,4 +43,12 @@ func (n Namer) CheckerName(table, column string) (name string) {
 
 func (n Namer) IndexName(table, column string) (name string) {
 	return ConvertNameToFormat(n.NamingStrategy.IndexName(table, column))
+}
+
+func (n Namer) SchemaName(table string) string {
+	return ConvertNameToFormat(n.NamingStrategy.SchemaName(table))
+}
+
+func (n Namer) UniqueName(table, column string) string {
+	return ConvertNameToFormat(n.NamingStrategy.UniqueName(table, column))
 }
