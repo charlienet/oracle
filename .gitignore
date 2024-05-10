@@ -1,0 +1,6 @@
+.idea
+vendor/
+go.sum
+CHANGELOG.md
+/test_local/
+/go.work*
