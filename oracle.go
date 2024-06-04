@@ -10,7 +10,8 @@ import (
 
 	"gorm.io/gorm/utils"
 
-	_ "github.com/godror/godror"
+	// _ "github.com/godror/godror"
+	_ "github.com/sijms/go-ora/v2"
 	"github.com/thoas/go-funk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
@@ -67,7 +68,8 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 		DeleteClauses: []string{"DELETE", "FROM", "WHERE", "RETURNING"},
 	})
 
-	d.DriverName = "godror"
+	// d.DriverName = "godror"
+	d.DriverName = "oracle"
 
 	// godror.Batch
 
@@ -83,7 +85,7 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 	if err != nil {
 		return err
 	}
-	//log.Println("DBver:" + d.DBVer)
+
 	if err = db.Callback().Create().Replace("gorm:create", Create); err != nil {
 		return
 	}
