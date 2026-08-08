@@ -3,6 +3,7 @@ package oracle
 import (
 	"bytes"
 	"database/sql"
+	"fmt"
 	"reflect"
 
 	"github.com/thoas/go-funk"
@@ -96,6 +97,33 @@ func Create(db *gorm.DB) {
 		}
 
 		if !db.DryRun {
+			// 开启事务以确保批量插入的一致性
+			var tx *sql.Tx
+			var err error
+			var isTransaction bool = false
+			
+			// 检查是否已经在一个事务中
+			if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
+				tx = sqlTx
+				isTransaction = true
+			} else if sqlDb, ok := stmt.ConnPool.(*sql.DB); ok {
+				tx, err = sqlDb.Begin()
+				if err != nil {
+					db.AddError(err)
+					return
+				}
+				defer func() {
+					if db.Error != nil && !isTransaction {
+						_ = tx.Rollback()
+					} else if !isTransaction {
+						_ = tx.Commit()
+					}
+				}()
+			} else {
+				db.AddError(fmt.Errorf("unsupported connection pool type"))
+				return
+			}
+
 			for idx, vals := range values.Values {
 				// HACK HACK: replace values one by one, assuming its value layout will be the same all the time, i.e. aligned
 				for idx, val := range vals {
@@ -113,13 +141,18 @@ func Create(db *gorm.DB) {
 				// and then we insert each row one by one then put the returning values back (i.e. last return id => smart insert)
 				// we keep track of the index so that the sub-reflected value is also correct
 
-				// BIG BUG: what if any of the transactions failed? some result might already be inserted that oracle is so
-				// sneaky that some transaction inserts will exceed the buffer and so will be pushed at unknown point,
-				// resulting in dangling row entries, so we might need to delete them if an error happens
+				var execConn *sql.Tx
+				if isTransaction {
+					execConn = tx // 已经在事务中，直接使用原事务
+				} else {
+					execConn = tx // 使用新创建的事务
+				}
 
-				switch result, err := stmt.ConnPool.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...); err {
+				switch result, err := execConn.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...); err {
 				case nil: // success
-					db.RowsAffected, _ = result.RowsAffected()
+					// 批量插入时累加每个单行插入的受影响行数
+					rowsAffected, _ := result.RowsAffected()
+					db.RowsAffected += rowsAffected
 
 					insertTo := stmt.ReflectValue
 					switch insertTo.Kind() {
@@ -140,13 +173,27 @@ func Create(db *gorm.DB) {
 										db.AddError(err)
 									}
 								case reflect.Map:
-									// todo 设置id的值
+									// 设置Map类型的ID值
+									mapValue := reflect.ValueOf(insertTo.Interface())
+									if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
+										keyValue := reflect.ValueOf(field.DBName)
+										destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(sql.Out).Dest)
+										if destValue.Kind() == reflect.Ptr {
+											destValue = destValue.Elem()
+										}
+										mapValue.SetMapIndex(keyValue, destValue)
+									}
 								}
 							},
 						)
 					}
 				default: // failure
 					db.AddError(err)
+					// 如果不是在已有事务中，则回滚我们创建的事务
+					if !isTransaction {
+						_ = tx.Rollback()
+					}
+					return
 				}
 			}
 		}

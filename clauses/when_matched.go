@@ -19,7 +19,8 @@ func (w WhenMatched) Build(builder clause.Builder) {
 		builder.WriteString(" UPDATE ")
 		builder.WriteString(w.Name())
 		builder.WriteByte(' ')
-		w.Build(builder)
+		builder.WriteString("SET ")
+		w.Set.Build(builder)
 
 		buildWhere := func(where clause.Where) {
 			builder.WriteString(where.Name())

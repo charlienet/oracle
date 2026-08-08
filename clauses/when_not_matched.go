@@ -21,7 +21,7 @@ func (w WhenNotMatched) Build(builder clause.Builder) {
 
 		builder.WriteString(" THEN")
 		builder.WriteString(" INSERT ")
-		w.Build(builder)
+		w.Values.Build(builder)
 
 		if len(w.Where.Exprs) > 0 {
 			builder.WriteString(w.Where.Name())
