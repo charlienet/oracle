@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/thoas/go-funk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
 	"gorm.io/gorm/clause"
 	gormSchema "gorm.io/gorm/schema"
 
-	"git.charlienet.top/go/oracle/clauses"
+	"github.com/charlienet/oracle/clauses"
+	"github.com/charlienet/oracle/utils"
 )
 
 func Create(db *gorm.DB) {
@@ -38,36 +38,36 @@ func Create(db *gorm.DB) {
 		values := callbacks.ConvertToCreateValues(stmt)
 		onConflict, hasConflict := stmt.Clauses["ON CONFLICT"].Expression.(clause.OnConflict)
 		// are all columns in value the primary fields in schema only?
-		if hasConflict && funk.Contains(
-			funk.Map(values.Columns, func(c clause.Column) string { return c.Name }),
-			funk.Map(schema.PrimaryFields, func(field *gormSchema.Field) string { return field.DBName }),
+		if hasConflict && utils.ContainsSliceString(
+			utils.MapString(values.Columns, func(c clause.Column) string { return c.Name }),
+			utils.MapString(schema.PrimaryFields, func(field *gormSchema.Field) string { return field.DBName }),
 		) {
 			stmt.AddClauseIfNotExists(clauses.Merge{
 				Using: []clause.Interface{
 					clause.Select{
-						Columns: funk.Map(values.Columns, func(column clause.Column) clause.Column {
-							// HACK: I can not come up with a better alternative for now
-							// I want to add a value to the list of variable and then capture the bind variable position as well
-							buf := bytes.NewBufferString("")
-							stmt.Vars = append(stmt.Vars, values.Values[0][funk.IndexOf(values.Columns, column)])
-							stmt.BindVarTo(buf, stmt, nil)
+						Columns: utils.MapClauseColumn(values.Columns, func(column clause.Column) clause.Column {
+						// HACK: I can not come up with a better alternative for now
+						// I want to add a value to the list of variable and then capture the bind variable position as well
+						buf := bytes.NewBufferString("")
+						stmt.Vars = append(stmt.Vars, values.Values[0][utils.IndexOf(values.Columns, column)])
+						stmt.BindVarTo(buf, stmt, nil)
 
-							column.Alias = column.Name
-							// then the captured bind var will be the name
-							column.Name = buf.String()
-							return column
-						}).([]clause.Column),
+						column.Alias = column.Name
+						// then the captured bind var will be the name
+						column.Name = buf.String()
+						return column
+					}), //utils.MapClauseColumn(values.Columns, func(column clause.Column) clause.Column {
 					},
 					clause.From{
 						Tables: []clause.Table{{Name: db.Dialector.(Dialector).DummyTableName()}},
 					},
 				},
-				On: funk.Map(schema.PrimaryFields, func(field *gormSchema.Field) clause.Expression {
+				On: utils.MapFieldToExpr(schema.PrimaryFields, func(field *gormSchema.Field) clause.Expression {
 					return clause.Eq{
 						Column: clause.Column{Table: stmt.Schema.Table, Name: field.DBName},
 						Value:  clause.Column{Table: clauses.MergeDefaultExcludeName(), Name: field.DBName},
 					}
-				}).([]clause.Expression),
+				}),
 			})
 			stmt.AddClauseIfNotExists(clauses.WhenMatched{Set: onConflict.DoUpdates})
 			stmt.AddClauseIfNotExists(clauses.WhenNotMatched{Values: values})
@@ -77,11 +77,11 @@ func Create(db *gorm.DB) {
 			stmt.AddClauseIfNotExists(clause.Insert{Table: clause.Table{Name: stmt.Schema.Table}})
 			stmt.AddClause(clause.Values{Columns: values.Columns, Values: [][]interface{}{values.Values[0]}})
 			if hasDefaultValues {
-				stmt.AddClauseIfNotExists(clause.Returning{
-					Columns: funk.Map(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) clause.Column {
-						return clause.Column{Name: field.DBName}
-					}).([]clause.Column),
-				})
+			stmt.AddClauseIfNotExists(clause.Returning{
+				Columns: utils.MapFieldToColumn(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) clause.Column {
+					return clause.Column{Name: field.DBName}
+				}),
+			})
 			}
 			stmt.Build("INSERT", "VALUES", "RETURNING")
 			if hasDefaultValues {
@@ -162,9 +162,9 @@ func Create(db *gorm.DB) {
 
 					if hasDefaultValues {
 						// bind returning value back to reflected value in the respective fields
-						funk.ForEach(
-							funk.Filter(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) bool {
-								return funk.Contains(boundVars, field.Name)
+						utils.ForEachField(
+							utils.FilterFields(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) bool {
+								return utils.ContainsField(boundVars, field.Name)
 							}),
 							func(field *gormSchema.Field) {
 								switch insertTo.Kind() {
@@ -199,3 +199,5 @@ func Create(db *gorm.DB) {
 		}
 	}
 }
+
+

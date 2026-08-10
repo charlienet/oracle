@@ -12,7 +12,6 @@ import (
 
 	// _ "github.com/godror/godror"
 	_ "github.com/sijms/go-ora/v2"
-	"github.com/thoas/go-funk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
 	"gorm.io/gorm/clause"
@@ -20,7 +19,8 @@ import (
 	"gorm.io/gorm/migrator"
 	"gorm.io/gorm/schema"
 	
-	"git.charlienet.top/go/oracle/driver_adapter"
+	"github.com/charlienet/oracle/driver_adapter"
+	oracleUtils "github.com/charlienet/oracle/utils"
 )
 
 const RowNumberAliasForOracle11 = "ROW_NUM"
@@ -336,7 +336,7 @@ func (d Dialector) QuoteTo(writer clause.Writer, str string) {
 var numericPlaceholder = regexp.MustCompile(`:(\d+)`)
 
 func (d Dialector) Explain(sql string, vars ...interface{}) string {
-	return logger.ExplainSQL(sql, numericPlaceholder, `'`, funk.Map(vars, func(v interface{}) interface{} {
+	return logger.ExplainSQL(sql, numericPlaceholder, `'`, oracleUtils.MapInterface(vars, func(v interface{}) interface{} {
 		switch v := v.(type) {
 		case bool:
 			if v {
@@ -346,7 +346,7 @@ func (d Dialector) Explain(sql string, vars ...interface{}) string {
 		default:
 			return v
 		}
-	}).([]interface{})...)
+	})...)
 }
 
 func (d Dialector) DataTypeOf(field *schema.Field) string {

@@ -6,10 +6,11 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/thoas/go-funk"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	gormSchema "gorm.io/gorm/schema"
+
+	"github.com/charlienet/oracle/utils"
 )
 
 func Delete(db *gorm.DB) {
@@ -83,9 +84,9 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 		// 添加 RETURNING 子句（如果有默认值字段或需要返回值）
 		if hasDefaultValues {
 			stmt.AddClauseIfNotExists(clause.Returning{
-				Columns: funk.Map(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) clause.Column {
+				Columns: utils.MapFieldToColumn(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) clause.Column {
 					return clause.Column{Name: field.DBName}
-				}).([]clause.Column),
+				}),
 			})
 		}
 		
@@ -164,9 +165,9 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 			}
 
 			// 绑定返回值到模型字段
-			funk.ForEach(
-				funk.Filter(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) bool {
-					return funk.Contains(boundVars, field.Name)
+			utils.ForEachField(
+				utils.FilterFields(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) bool {
+					return utils.ContainsField(boundVars, field.Name)
 				}),
 				func(field *gormSchema.Field) {
 					switch updateTo.Kind() {
@@ -212,9 +213,9 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int) {
 		// 添加 RETURNING 子句（如果有默认值字段或需要返回值）
 		if hasDefaultValues {
 			stmt.AddClauseIfNotExists(clause.Returning{
-				Columns: funk.Map(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) clause.Column {
+				Columns: utils.MapFieldToColumn(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) clause.Column {
 					return clause.Column{Name: field.DBName}
-				}).([]clause.Column),
+				}),
 			})
 		}
 		
@@ -293,9 +294,9 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int) {
 			}
 
 			// 绑定返回值到模型字段
-			funk.ForEach(
-				funk.Filter(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) bool {
-					return funk.Contains(boundVars, field.Name)
+			utils.ForEachField(
+				utils.FilterFields(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) bool {
+					return utils.ContainsField(boundVars, field.Name)
 				}),
 				func(field *gormSchema.Field) {
 					switch deleteTo.Kind() {

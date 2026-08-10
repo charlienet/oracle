@@ -2,10 +2,9 @@ package oracle
 
 import (
 	"github.com/emirpasic/gods/sets/hashset"
-	"github.com/thoas/go-funk"
 )
 
-var ReservedWords = hashset.New(funk.Map(ReservedWordsList, func(s string) interface{} { return s }).([]interface{})...)
+var ReservedWords = hashset.New(MapStringToInterface(ReservedWordsList)...)
 
 func IsReservedWord(v string) bool {
 	return ReservedWords.Contains(v)
@@ -25,4 +24,13 @@ var ReservedWordsList = []string{
 	"SERIAL", "SET", "SOLVE", "SOME", "SORT", "SPEC", "SUM", "SYNCH", "TEXT_MEASURE", "THEN", "TIME", "TIMESTAMP",
 	"TO", "UNBRANCH", "UPDATE", "USING", "VALIDATE", "VALUES", "VARCHAR2", "WHEN", "WHERE", "WITHIN", "WITH", "YEAR",
 	"ZERO", "ZONE",
+}
+
+// 辅助函数：将字符串切片转换为接口切片
+func MapStringToInterface(slice []string) []interface{} {
+	result := make([]interface{}, len(slice))
+	for i, v := range slice {
+		result[i] = v
+	}
+	return result
 }
