@@ -3,6 +3,8 @@ package tests
 import (
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // SeqBatchModel 非显式 autoIncrement 主键模型。
@@ -344,6 +346,126 @@ END;`).Error; err != nil {
 		}
 	}
 	t.Logf("time-default batch OK, IDs %d..%d", items[0].ID, items[2].ID)
+}
+
+// MerchantBlackMock 模拟用户应用模型：非显式 autoIncrement 主键（ID 进入
+// FieldsWithDefaultDBValue，任何删除路径都会生成 RETURNING）+ 软删除字段。
+// 与用户场景一致：事务内先按非主键条件 Delete（可能多行），再 CreateInBatches。
+type MerchantBlackMock struct {
+	ID        uint           `gorm:"column:id;primaryKey"`
+	BlackID   uint           `gorm:"column:black_id"`
+	BlackType string         `gorm:"column:black_type;size:20"`
+	Reference string         `gorm:"column:reference;size:100"`
+	DeletedAt gorm.DeletedAt `gorm:"column:deleted_at"`
+}
+
+func (MerchantBlackMock) TableName() string {
+	return "TEST_MERCHANT_BLACK"
+}
+
+// TestSoftDeleteMultiRowReturning 重现：事务内先多行软删除（WHERE 匹配多行），
+// 软删除 UPDATE ... RETURNING id INTO :out 因多行受影响触发
+// "more than one row affected with return clause"。
+func TestSoftDeleteMultiRowReturning(t *testing.T) {
+	DB.Migrator().DropTable(&MerchantBlackMock{})
+	if err := DB.AutoMigrate(&MerchantBlackMock{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+	defer DB.Migrator().DropTable(&MerchantBlackMock{})
+
+	// 插入 3 行相同 BLACK_TYPE
+	items := []MerchantBlackMock{
+		{BlackID: 1, BlackType: "M", Reference: "R1"},
+		{BlackID: 2, BlackType: "M", Reference: "R2"},
+		{BlackID: 3, BlackType: "M", Reference: "R3"},
+	}
+	if err := DB.Create(&items).Error; err != nil {
+		t.Fatalf("failed to seed: %v", err)
+	}
+
+	// 模拟用户场景：同一事务内先多行 Delete 再 CreateInBatches
+	records := []MerchantBlackMock{
+		{BlackID: 10, BlackType: "M", Reference: "N1"},
+		{BlackID: 11, BlackType: "M", Reference: "N2"},
+	}
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("BLACK_TYPE = ?", "M").Delete(&MerchantBlackMock{}).Error; err != nil {
+			return err
+		}
+		return tx.Omit("BlackID").CreateInBatches(records, 2).Error
+	})
+	if err != nil {
+		t.Fatalf("transaction failed: %v", err)
+	}
+
+	// 旧 3 行应已软删除（deleted_at 非空）
+	var deleted int64
+	if err := DB.Raw("SELECT COUNT(*) FROM TEST_MERCHANT_BLACK WHERE BLACK_TYPE = 'M' AND DELETED_AT IS NOT NULL").Scan(&deleted).Error; err != nil {
+		t.Fatalf("failed to count deleted: %v", err)
+	}
+	if deleted != 3 {
+		t.Errorf("expected 3 soft-deleted rows, got %d", deleted)
+	}
+	// 新 2 行应已插入
+	var alive int64
+	if err := DB.Raw("SELECT COUNT(*) FROM TEST_MERCHANT_BLACK WHERE BLACK_TYPE = 'M' AND DELETED_AT IS NULL").Scan(&alive).Error; err != nil {
+		t.Fatalf("failed to count alive: %v", err)
+	}
+	if alive != 2 {
+		t.Errorf("expected 2 inserted rows, got %d", alive)
+	}
+	for i, r := range records {
+		if r.ID == 0 {
+			t.Errorf("record %d: expected ID set via RETURNING", i)
+		}
+	}
+	t.Logf("transaction OK: soft-deleted %d, inserted IDs %d..%d", deleted, records[0].ID, records[1].ID)
+}
+
+// MerchantBlackHardMock 无软删除字段 → Delete 走硬删除路径（DELETE...RETURNING）。
+type MerchantBlackHardMock struct {
+	ID        uint   `gorm:"column:id;primaryKey"`
+	BlackID   uint   `gorm:"column:black_id"`
+	BlackType string `gorm:"column:black_type;size:20"`
+	Reference string `gorm:"column:reference;size:100"`
+}
+
+func (MerchantBlackHardMock) TableName() string {
+	return "TEST_MERCHANT_BLACK_HARD"
+}
+
+// TestHardDeleteMultiRowReturning 重现：硬删除按非主键条件匹配多行，
+// DELETE ... RETURNING id INTO :out 因多行受影响触发报错。
+func TestHardDeleteMultiRowReturning(t *testing.T) {
+	DB.Migrator().DropTable(&MerchantBlackHardMock{})
+	if err := DB.AutoMigrate(&MerchantBlackHardMock{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+	defer DB.Migrator().DropTable(&MerchantBlackHardMock{})
+
+	items := []MerchantBlackHardMock{
+		{BlackID: 1, BlackType: "M", Reference: "R1"},
+		{BlackID: 2, BlackType: "M", Reference: "R2"},
+		{BlackID: 3, BlackType: "M", Reference: "R3"},
+	}
+	if err := DB.Create(&items).Error; err != nil {
+		t.Fatalf("failed to seed: %v", err)
+	}
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		return tx.Where("BLACK_TYPE = ?", "M").Delete(&MerchantBlackHardMock{}).Error
+	})
+	if err != nil {
+		t.Fatalf("multi-row hard delete failed: %v", err)
+	}
+	var count int64
+	if err := DB.Raw("SELECT COUNT(*) FROM TEST_MERCHANT_BLACK_HARD").Scan(&count).Error; err != nil {
+		t.Fatalf("failed to count: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 rows after hard delete, got %d", count)
+	}
+	t.Logf("multi-row hard delete OK")
 }
 
 // TestCreateBatchMultiReturning 重现：多个默认值字段（RETURNING 多输出参数）批量插入。

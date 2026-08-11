@@ -27,7 +27,7 @@ func Delete(db *gorm.DB) {
 	boundVars := make(map[string]int)
 
 	// 注入主键 WHERE 条件（GORM 默认回调会做这一步）
-	addPrimaryKeyWhere(stmt, schema)
+	pkValues := addPrimaryKeyWhere(stmt, schema)
 
 	// 1. WHERE 安全检查（最重要）
 	if where, ok := stmt.Clauses["WHERE"].Expression.(clause.Where); ok {
@@ -53,18 +53,22 @@ func Delete(db *gorm.DB) {
 
 	if softDeleteField != nil && !stmt.Unscoped {
 		// 软删除：转换为 UPDATE
-		performSoftDelete(db, softDeleteField, boundVars)
+		performSoftDelete(db, softDeleteField, boundVars, pkValues)
 	} else {
 		// 硬删除：执行 DELETE（Unscoped 时强制硬删除）
-		performHardDelete(db, boundVars)
+		performHardDelete(db, boundVars, pkValues)
 	}
 }
 
-func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[string]int) {
+func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[string]int, pkValues int) {
 	stmt := db.Statement
 	schema := stmt.Schema
 	
 	hasDefaultValues := len(schema.FieldsWithDefaultDBValue) > 0
+	// 多行删除时 Oracle 不支持单行 RETURNING INTO，只有单行删除才启用 RETURNING
+	if pkValues != 1 {
+		hasDefaultValues = false
+	}
 	
 	if !stmt.Unscoped {
 		for _, c := range schema.DeleteClauses {
@@ -194,11 +198,15 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 	}
 }
 
-func performHardDelete(db *gorm.DB, boundVars map[string]int) {
+func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 	stmt := db.Statement
 	schema := stmt.Schema
 	
 	hasDefaultValues := len(schema.FieldsWithDefaultDBValue) > 0
+	// 多行删除时 Oracle 不支持单行 RETURNING INTO，只有单行删除才启用 RETURNING
+	if pkValues != 1 {
+		hasDefaultValues = false
+	}
 	
 	if !stmt.Unscoped {
 		for _, c := range schema.DeleteClauses {

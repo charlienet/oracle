@@ -125,9 +125,9 @@ func Create(db *gorm.DB) {
 				return
 			}
 
-			for idx, vals := range values.Values {
+			for rowIdx, vals := range values.Values {
 				// HACK HACK: replace values one by one, assuming its value layout will be the same all the time, i.e. aligned
-				for idx, val := range vals {
+				for colIdx, val := range vals {
 					switch v := val.(type) {
 					case bool:
 						if v {
@@ -137,7 +137,7 @@ func Create(db *gorm.DB) {
 						}
 					}
 
-					stmt.Vars[idx] = val
+					stmt.Vars[colIdx] = val
 				}
 				// and then we insert each row one by one then put the returning values back (i.e. last return id => smart insert)
 				// we keep track of the index so that the sub-reflected value is also correct
@@ -158,7 +158,7 @@ func Create(db *gorm.DB) {
 					insertTo := stmt.ReflectValue
 					switch insertTo.Kind() {
 					case reflect.Slice, reflect.Array:
-						insertTo = insertTo.Index(idx)
+						insertTo = insertTo.Index(rowIdx)
 					}
 
 					if hasDefaultValues {
