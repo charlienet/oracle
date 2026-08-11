@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"slices"
+
 	"gorm.io/gorm/clause"
 	gormSchema "gorm.io/gorm/schema"
 )
@@ -14,8 +16,8 @@ func MapString[T any](slice []T, fn func(T) string) []string {
 	return result
 }
 
-func MapInterface[T any](slice []T, fn func(T) interface{}) []interface{} {
-	result := make([]interface{}, len(slice))
+func MapInterface[T any](slice []T, fn func(T) any) []any {
+	result := make([]any, len(slice))
 	for i, v := range slice {
 		result[i] = fn(v)
 	}
@@ -48,12 +50,7 @@ func MapFieldToExpr(slice []*gormSchema.Field, fn func(*gormSchema.Field) clause
 
 // 辅助函数：实现 funk.Contains 功能
 func ContainsString(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }
 
 func ContainsSliceString(outer []string, inner []string) bool {

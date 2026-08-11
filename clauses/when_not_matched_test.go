@@ -18,7 +18,7 @@ func TestWhenNotMatchedBuild(t *testing.T) {
 	w := WhenNotMatched{
 		Values: clause.Values{
 			Columns: []clause.Column{{Name: "name"}, {Name: "age"}},
-			Values:  [][]interface{}{{"x", 1}},
+			Values:  [][]any{{"x", 1}},
 		},
 	}
 
@@ -40,7 +40,7 @@ func TestWhenNotMatchedBuildWithWhere(t *testing.T) {
 	w := WhenNotMatched{
 		Values: clause.Values{
 			Columns: []clause.Column{{Name: "name"}},
-			Values:  [][]interface{}{{"x"}},
+			Values:  [][]any{{"x"}},
 		},
 		Where: clause.Where{Exprs: []clause.Expression{
 			clause.Eq{Column: clause.Column{Name: "deleted"}, Value: 0},
@@ -74,7 +74,7 @@ func TestWhenNotMatchedBuildPanicsOnMultipleRows(t *testing.T) {
 	w := WhenNotMatched{
 		Values: clause.Values{
 			Columns: []clause.Column{{Name: "name"}},
-			Values:  [][]interface{}{{"x"}, {"y"}},
+			Values:  [][]any{{"x"}, {"y"}},
 		},
 	}
 

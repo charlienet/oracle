@@ -1,5 +1,7 @@
 package driver_adapter
 
+import "slices"
+
 import "testing"
 
 // TestRegistryRegisterAndGet 验证 Register 后 Get 能返回对应适配器
@@ -46,10 +48,8 @@ func TestRegistryListDrivers(t *testing.T) {
 	if len(drivers) == 0 {
 		t.Fatal("ListDrivers() 返回空列表")
 	}
-	for _, d := range drivers {
-		if d == DriverGoOra {
-			return
-		}
+	if slices.Contains(drivers, DriverGoOra) {
+		return
 	}
 	t.Errorf("ListDrivers() = %v，应包含 DriverGoOra", drivers)
 }

@@ -55,17 +55,17 @@ func Update(db *gorm.DB) {
 	if stmt.SQL.String() == "" {
 		// 构建 UPDATE 语句
 		stmt.AddClauseIfNotExists(clause.Update{Table: clause.Table{Name: stmt.Schema.Table}})
-		
+
 		// 构建 SET 子句
 		_, hasSet := stmt.Clauses["SET"].Expression.(clause.Set)
 		if !hasSet {
 			// 获取要更新的值
 			// 从 stmt.Dest 获取待更新的数据
 			reflectValue := reflect.ValueOf(stmt.Dest)
-			if reflectValue.Kind() == reflect.Ptr {
+			if reflectValue.Kind() == reflect.Pointer {
 				reflectValue = reflectValue.Elem()
 			}
-			
+
 			// 构建 SET 表达式
 			sets := make(clause.Set, 0)
 			switch reflectValue.Kind() {
@@ -93,10 +93,10 @@ func Update(db *gorm.DB) {
 					}
 				}
 			}
-			
+
 			stmt.AddClause(clause.Set(sets))
 		}
-		
+
 		// 添加 RETURNING 子句（如果有默认值字段）
 		if hasDefaultValues {
 			stmt.AddClauseIfNotExists(clause.Returning{
@@ -105,10 +105,10 @@ func Update(db *gorm.DB) {
 				}),
 			})
 		}
-		
+
 		// 构建语句
 		stmt.Build("UPDATE", "SET", "WHERE", "RETURNING")
-		
+
 		// 如果有 RETURNING 子句，添加 INTO 子句
 		if hasDefaultValues {
 			stmt.WriteString(" INTO ")
@@ -127,7 +127,7 @@ func Update(db *gorm.DB) {
 		var tx *sql.Tx
 		var err error
 		var isTransaction bool = false
-		
+
 		// 检查是否已经在一个事务中
 		if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
 			tx = sqlTx
@@ -164,7 +164,7 @@ func Update(db *gorm.DB) {
 			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
 			return
 		}
-		
+
 		db.RowsAffected, _ = result.RowsAffected()
 
 		// 处理 RETURNING 返回值
@@ -195,7 +195,7 @@ func Update(db *gorm.DB) {
 						if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 							keyValue := reflect.ValueOf(field.DBName)
 							destValue := reflect.ValueOf(outDest(stmt.Vars, boundVars[field.Name]))
-							if destValue.Kind() == reflect.Ptr {
+							if destValue.Kind() == reflect.Pointer {
 								destValue = destValue.Elem()
 							}
 							mapValue.SetMapIndex(keyValue, destValue)

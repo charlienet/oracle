@@ -19,7 +19,7 @@ func (testDialector) Migrator(*gorm.DB) gorm.Migrator                { return ni
 func (testDialector) DataTypeOf(*schema.Field) string                { return "" }
 func (testDialector) DefaultValueOf(*schema.Field) clause.Expression { return nil }
 
-func (testDialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement, v interface{}) {
+func (testDialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement, v any) {
 	writer.WriteString(":")
 	writer.WriteString(strconv.Itoa(len(stmt.Vars)))
 }
@@ -28,7 +28,7 @@ func (testDialector) QuoteTo(writer clause.Writer, str string) {
 	writer.WriteString(str)
 }
 
-func (testDialector) Explain(sql string, vars ...interface{}) string { return sql }
+func (testDialector) Explain(sql string, vars ...any) string { return sql }
 
 // newStatement 构造一个可以直接作为 clause.Builder 使用的 gorm.Statement。
 func newStatement(t *testing.T) *gorm.Statement {

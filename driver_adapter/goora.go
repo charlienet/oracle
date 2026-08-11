@@ -17,7 +17,7 @@ type goOraOutParam struct {
 }
 
 // GetDest 返回目标指针
-func (o *goOraOutParam) GetDest() interface{} {
+func (o *goOraOutParam) GetDest() any {
 	return o.out.Dest
 }
 
@@ -66,7 +66,7 @@ func (l *goOraLobData) IsValid() bool {
 
 // goOraBatchData 包装批量数据
 type goOraBatchData struct {
-	values []interface{}
+	values []any
 }
 
 // Len 返回数据长度
@@ -75,7 +75,7 @@ func (b *goOraBatchData) Len() int {
 }
 
 // GetValues 返回所有值
-func (b *goOraBatchData) GetValues() []interface{} {
+func (b *goOraBatchData) GetValues() []any {
 	return b.values
 }
 
@@ -95,7 +95,7 @@ func (a *GoOraAdapter) Open(dsn string) (*sql.DB, error) {
 }
 
 // CreateOutParam 创建输出参数（用于 RETURNING INTO）
-func (a *GoOraAdapter) CreateOutParam(dest interface{}, size int) OutParam {
+func (a *GoOraAdapter) CreateOutParam(dest any, size int) OutParam {
 	return &goOraOutParam{
 		out: go_ora.Out{Dest: dest, Size: size},
 	}
@@ -122,7 +122,7 @@ func (a *GoOraAdapter) CreateBlob(value []byte) LobData {
 }
 
 // CreateBatch 创建批量数据
-func (a *GoOraAdapter) CreateBatch(values []interface{}) BatchData {
+func (a *GoOraAdapter) CreateBatch(values []any) BatchData {
 	return &goOraBatchData{
 		values: values,
 	}
@@ -144,36 +144,36 @@ func (a *GoOraAdapter) SupportsBulkCopy() bool {
 }
 
 // WrapClobForInsert 包装 CLOB 值用于插入
-func (a *GoOraAdapter) WrapClobForInsert(value string) interface{} {
+func (a *GoOraAdapter) WrapClobForInsert(value string) any {
 	return go_ora.Clob{String: value, Valid: true}
 }
 
 // WrapBlobForInsert 包装 BLOB 值用于插入
-func (a *GoOraAdapter) WrapBlobForInsert(value []byte) interface{} {
+func (a *GoOraAdapter) WrapBlobForInsert(value []byte) any {
 	return go_ora.Blob{Data: value, Valid: true}
 }
 
 // UnwrapQueryResult 解包查询结果
-func (a *GoOraAdapter) UnwrapQueryResult(value interface{}, typeName string) interface{} {
+func (a *GoOraAdapter) UnwrapQueryResult(value any, typeName string) any {
 	// 根据需要处理 go-ora 特有的返回类型转换
 	// 这里简单返回原始值，可根据实际需求扩展
 	return value
 }
 
 // GetConnection 获取底层连接（用于高级操作）
-func (a *GoOraAdapter) GetConnection(db *sql.DB) (interface{}, error) {
+func (a *GoOraAdapter) GetConnection(db *sql.DB) (any, error) {
 	conn, err := db.Conn(context.Background())
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
-	var rawConn interface{}
-	err = conn.Raw(func(driverConn interface{}) error {
+	var rawConn any
+	err = conn.Raw(func(driverConn any) error {
 		rawConn = driverConn
 		return nil
 	})
-	
+
 	return rawConn, err
 }
 

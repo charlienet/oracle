@@ -46,17 +46,17 @@ func Create(db *gorm.DB) {
 				Using: []clause.Interface{
 					clause.Select{
 						Columns: utils.MapClauseColumn(values.Columns, func(column clause.Column) clause.Column {
-						// HACK: I can not come up with a better alternative for now
-						// I want to add a value to the list of variable and then capture the bind variable position as well
-						buf := bytes.NewBufferString("")
-						stmt.Vars = append(stmt.Vars, values.Values[0][utils.IndexOf(values.Columns, column)])
-						stmt.BindVarTo(buf, stmt, nil)
+							// HACK: I can not come up with a better alternative for now
+							// I want to add a value to the list of variable and then capture the bind variable position as well
+							buf := bytes.NewBufferString("")
+							stmt.Vars = append(stmt.Vars, values.Values[0][utils.IndexOf(values.Columns, column)])
+							stmt.BindVarTo(buf, stmt, nil)
 
-						column.Alias = column.Name
-						// then the captured bind var will be the name
-						column.Name = buf.String()
-						return column
-					}), //utils.MapClauseColumn(values.Columns, func(column clause.Column) clause.Column {
+							column.Alias = column.Name
+							// then the captured bind var will be the name
+							column.Name = buf.String()
+							return column
+						}), //utils.MapClauseColumn(values.Columns, func(column clause.Column) clause.Column {
 					},
 					clause.From{
 						Tables: []clause.Table{{Name: db.Dialector.(*Dialector).DummyTableName()}},
@@ -82,13 +82,13 @@ func Create(db *gorm.DB) {
 			// 非主键默认值字段（如序列默认列）在此路径下无法回填，属 Oracle 限制。
 		} else {
 			stmt.AddClauseIfNotExists(clause.Insert{Table: clause.Table{Name: stmt.Schema.Table}})
-			stmt.AddClause(clause.Values{Columns: values.Columns, Values: [][]interface{}{values.Values[0]}})
+			stmt.AddClause(clause.Values{Columns: values.Columns, Values: [][]any{values.Values[0]}})
 			if hasDefaultValues {
-			stmt.AddClauseIfNotExists(clause.Returning{
-				Columns: utils.MapFieldToColumn(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) clause.Column {
-					return clause.Column{Name: field.DBName}
-				}),
-			})
+				stmt.AddClauseIfNotExists(clause.Returning{
+					Columns: utils.MapFieldToColumn(schema.FieldsWithDefaultDBValue, func(field *gormSchema.Field) clause.Column {
+						return clause.Column{Name: field.DBName}
+					}),
+				})
 			}
 			stmt.Build("INSERT", "VALUES", "RETURNING")
 			if hasDefaultValues {
@@ -108,7 +108,7 @@ func Create(db *gorm.DB) {
 			var tx *sql.Tx
 			var err error
 			var isTransaction bool = false
-			
+
 			// 检查是否已经在一个事务中
 			if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
 				tx = sqlTx
@@ -185,7 +185,7 @@ func Create(db *gorm.DB) {
 									if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 										keyValue := reflect.ValueOf(field.DBName)
 										destValue := reflect.ValueOf(outDest(stmt.Vars, boundVars[field.Name]))
-										if destValue.Kind() == reflect.Ptr {
+										if destValue.Kind() == reflect.Pointer {
 											destValue = destValue.Elem()
 										}
 										mapValue.SetMapIndex(keyValue, destValue)
@@ -203,5 +203,3 @@ func Create(db *gorm.DB) {
 		}
 	}
 }
-
-

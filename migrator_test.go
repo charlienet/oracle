@@ -104,7 +104,7 @@ func TestMigratorDelegateMethods(t *testing.T) {
 
 	f := testField(schema.Int)
 	f.Size = 64
-	f.FieldType = reflect.TypeOf(int(0))
+	f.FieldType = reflect.TypeFor[int]()
 	f.IndirectFieldType = f.FieldType
 
 	if got := m.DataTypeOf(f); got != "INTEGER" {

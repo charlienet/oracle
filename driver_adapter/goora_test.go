@@ -119,7 +119,7 @@ func TestGoOraCreateBlob(t *testing.T) {
 // TestGoOraCreateBatch 验证批量数据创建
 func TestGoOraCreateBatch(t *testing.T) {
 	a := newTestAdapter()
-	want := []interface{}{1, "a"}
+	want := []any{1, "a"}
 
 	batch := a.CreateBatch(want)
 	if batch == nil {
@@ -208,7 +208,7 @@ func TestGoOraPing(t *testing.T) {
 func TestGoOraUnwrapQueryResult(t *testing.T) {
 	a := newTestAdapter()
 
-	cases := []interface{}{
+	cases := []any{
 		42,
 		"hello",
 		[]byte{1, 2, 3},

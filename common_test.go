@@ -43,7 +43,7 @@ type createDataModel struct {
 	ID int
 }
 
-func parseTestSchema(t *testing.T, model interface{}) *schema.Schema {
+func parseTestSchema(t *testing.T, model any) *schema.Schema {
 	t.Helper()
 	sch, err := schema.Parse(model, &sync.Map{}, schema.NamingStrategy{})
 	if err != nil {
@@ -60,8 +60,8 @@ func TestConvertValue(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		value interface{}
-		want  interface{}
+		value any
+		want  any
 	}{
 		{"bool true to 1", true, 1},
 		{"bool false to 0", false, 0},
@@ -105,8 +105,8 @@ func TestConvertFromOracleToField(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		value interface{}
-		want  interface{}
+		value any
+		want  any
 	}{
 		{"nil unchanged", nil, nil},
 		{"plain int unchanged", 42, 42},
@@ -222,7 +222,7 @@ func TestCheckMissingWhereConditions(t *testing.T) {
 func TestValidateCreateData(t *testing.T) {
 	tests := []struct {
 		name    string
-		data    interface{}
+		data    any
 		wantErr string
 	}{
 		{"nil data", nil, "create data cannot be nil"},

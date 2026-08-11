@@ -42,12 +42,12 @@ func outParam(field *schema.Field) go_ora.Out {
 }
 
 // outDest 读取 RETURNING INTO 输出参数的目标指针
-func outDest(vars []interface{}, pos int) interface{} {
+func outDest(vars []any, pos int) any {
 	return vars[pos].(go_ora.Out).Dest
 }
 
 // convertValue 将 Go 值转换为 Oracle 兼容格式
-func convertValue(value interface{}, field *schema.Field) interface{} {
+func convertValue(value any, field *schema.Field) any {
 	if value == nil {
 		return value
 	}
@@ -80,7 +80,7 @@ func convertValue(value interface{}, field *schema.Field) interface{} {
 }
 
 // convertFromOracleToField 将 Oracle 返回值转换为 Go 类型
-func convertFromOracleToField(value interface{}, field *schema.Field) interface{} {
+func convertFromOracleToField(value any, field *schema.Field) any {
 	if value == nil {
 		return value
 	}
@@ -117,13 +117,13 @@ func convertFromOracleToField(value interface{}, field *schema.Field) interface{
 }
 
 // validateCreateData 验证创建数据
-func validateCreateData(data interface{}) error {
+func validateCreateData(data any) error {
 	if data == nil {
 		return fmt.Errorf("create data cannot be nil")
 	}
 
 	rv := reflect.ValueOf(data)
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
 			return fmt.Errorf("create data pointer cannot be nil")
 		}
@@ -185,7 +185,7 @@ func isSoftDeleteCondition(condition clause.Expression, sch *schema.Schema) bool
 }
 
 // columnNameOf 从 clause 表达式的 Column 字段中提取列名
-func columnNameOf(col interface{}) string {
+func columnNameOf(col any) string {
 	switch c := col.(type) {
 	case clause.Column:
 		return c.Name

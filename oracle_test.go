@@ -31,7 +31,7 @@ func newTestStatement(d *Dialector) *gorm.Statement {
 func testField(dataType schema.DataType) *schema.Field {
 	return &schema.Field{
 		DataType:    dataType,
-		FieldType:   reflect.TypeOf(""),
+		FieldType:   reflect.TypeFor[string](),
 		TagSettings: map[string]string{},
 	}
 }
@@ -568,15 +568,15 @@ func TestClauseBuilders(t *testing.T) {
 
 func TestVersionCapabilities(t *testing.T) {
 	tests := []struct {
-		name                 string
-		dbVer                string
-		wantMajor            int
-		wantIdentity         bool
-		wantFetchOffset      bool
-		wantNativeBoolean    bool
-		wantExtendedString   bool
-		wantVector           bool
-		wantIsOracle11g      bool
+		name               string
+		dbVer              string
+		wantMajor          int
+		wantIdentity       bool
+		wantFetchOffset    bool
+		wantNativeBoolean  bool
+		wantExtendedString bool
+		wantVector         bool
+		wantIsOracle11g    bool
 	}{
 		{"11g", "11.2.0.4.0", 11, false, false, false, false, false, true},
 		{"10g", "10.2.0.1.0", 10, false, false, false, false, false, true},

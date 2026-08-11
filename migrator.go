@@ -39,16 +39,16 @@ func (m Migrator) CurrentDatabase() (name string) {
 	return
 }
 
-func (m Migrator) CreateTable(values ...interface{}) error {
+func (m Migrator) CreateTable(values ...any) error {
 	for _, value := range values {
 		m.TryRemoveOnUpdate(value)
 	}
-	
+
 	// 先创建表
 	if err := m.Migrator.CreateTable(values...); err != nil {
 		return err
 	}
-	
+
 	// 然后创建 ON UPDATE 触发器
 	for _, value := range values {
 		m.RunWithValue(value, func(stmt *gorm.Statement) error {
@@ -129,7 +129,7 @@ func (m Migrator) triggerName(table string) string {
 }
 
 // createAutoIncrementSupport 为自增主键创建序列和 BEFORE INSERT 触发器（仅不支持 IDENTITY 的版本）
-func (m Migrator) createAutoIncrementSupport(value interface{}) error {
+func (m Migrator) createAutoIncrementSupport(value any) error {
 	// 12c+ 原生支持 IDENTITY 列，无需序列 + 触发器模拟
 	if d, ok := m.Dialector.(*Dialector); ok && supportsIdentity(d.DBVer) {
 		return nil
@@ -227,7 +227,7 @@ func (m Migrator) dropSequence(table string) error {
 	return nil
 }
 
-func (m Migrator) DropTable(values ...interface{}) error {
+func (m Migrator) DropTable(values ...any) error {
 	values = m.ReorderModels(values, false)
 	for i := len(values) - 1; i >= 0; i-- {
 		value := values[i]
@@ -248,7 +248,7 @@ func (m Migrator) DropTable(values ...interface{}) error {
 	return nil
 }
 
-func (m Migrator) HasTable(value interface{}) bool {
+func (m Migrator) HasTable(value any) bool {
 	var count int64
 
 	m.RunWithValue(value, func(stmt *gorm.Statement) error {
@@ -264,7 +264,7 @@ func (m Migrator) HasTable(value interface{}) bool {
 }
 
 // ColumnTypes return columnTypes []gorm.ColumnType and execErr error
-func (m Migrator) ColumnTypes(value interface{}) ([]gorm.ColumnType, error) {
+func (m Migrator) ColumnTypes(value any) ([]gorm.ColumnType, error) {
 	columnTypes := make([]gorm.ColumnType, 0)
 	execErr := m.RunWithValue(value, func(stmt *gorm.Statement) (err error) {
 		rows, err := m.DB.Session(&gorm.Session{}).Table(stmt.Schema.Table).Where("ROWNUM = 1").Rows()
@@ -320,8 +320,8 @@ func (m Migrator) ColumnTypes(value interface{}) ([]gorm.ColumnType, error) {
 	return columnTypes, execErr
 }
 
-func (m Migrator) RenameTable(oldName, newName interface{}) (err error) {
-	resolveTable := func(name interface{}) (result string, err error) {
+func (m Migrator) RenameTable(oldName, newName any) (err error) {
+	resolveTable := func(name any) (result string, err error) {
 		if v, ok := name.(string); ok {
 			result = v
 		} else {
@@ -353,7 +353,7 @@ func (m Migrator) RenameTable(oldName, newName interface{}) (err error) {
 	).Error
 }
 
-func (m Migrator) AddColumn(value interface{}, field string) error {
+func (m Migrator) AddColumn(value any, field string) error {
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		if field := stmt.Schema.LookUpField(field); field != nil {
 			return m.DB.Exec(
@@ -365,7 +365,7 @@ func (m Migrator) AddColumn(value interface{}, field string) error {
 	})
 }
 
-func (m Migrator) DropColumn(value interface{}, name string) error {
+func (m Migrator) DropColumn(value any, name string) error {
 	if !m.HasColumn(value, name) {
 		return nil
 	}
@@ -383,7 +383,7 @@ func (m Migrator) DropColumn(value interface{}, name string) error {
 	})
 }
 
-func (m Migrator) AlterColumn(value interface{}, field string) error {
+func (m Migrator) AlterColumn(value any, field string) error {
 	if !m.HasColumn(value, field) {
 		return nil
 	}
@@ -401,7 +401,7 @@ func (m Migrator) AlterColumn(value interface{}, field string) error {
 	})
 }
 
-func (m Migrator) HasColumn(value interface{}, field string) bool {
+func (m Migrator) HasColumn(value any, field string) bool {
 	var count int64
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		if stmt.Schema != nil && strings.Contains(stmt.Schema.Table, ".") {
@@ -443,7 +443,7 @@ func (m Migrator) AlterDataTypeOf(stmt *gorm.Statement, field *schema.Field) (ex
 		}
 
 		if field.DefaultValueInterface != nil {
-			defaultStmt := &gorm.Statement{Vars: []interface{}{field.DefaultValueInterface}}
+			defaultStmt := &gorm.Statement{Vars: []any{field.DefaultValueInterface}}
 			m.Dialector.BindVarTo(defaultStmt, defaultStmt, field.DefaultValueInterface)
 			expr.SQL += " DEFAULT " + m.Dialector.Explain(defaultStmt.SQL.String(), field.DefaultValueInterface)
 		} else if field.DefaultValue != "(-)" {
@@ -457,6 +457,7 @@ func (m Migrator) AlterDataTypeOf(stmt *gorm.Statement, field *schema.Field) (ex
 
 	return
 }
+
 // FullDataTypeOf 返回字段的完整数据库类型（版本感知的默认值处理）。
 // GORM 标准实现会把 DefaultValue 直接拼成 "DEFAULT xxx"，对 11g 下引用序列的
 // NEXTVAL 默认值会生成非法 SQL（ORA-00984），因此在此重写：
@@ -482,7 +483,7 @@ func (m Migrator) FullDataTypeOf(field *schema.Field) (expr clause.Expr) {
 		}
 
 		if field.DefaultValueInterface != nil {
-			defaultStmt := &gorm.Statement{Vars: []interface{}{field.DefaultValueInterface}}
+			defaultStmt := &gorm.Statement{Vars: []any{field.DefaultValueInterface}}
 			m.Dialector.BindVarTo(defaultStmt, defaultStmt, field.DefaultValueInterface)
 			expr.SQL += " DEFAULT " + m.Dialector.Explain(defaultStmt.SQL.String(), field.DefaultValueInterface)
 		} else if field.DefaultValue != "(-)" {
@@ -497,12 +498,12 @@ func (m Migrator) FullDataTypeOf(field *schema.Field) (expr clause.Expr) {
 	return
 }
 
-func (m Migrator) CreateConstraint(value interface{}, name string) error {
+func (m Migrator) CreateConstraint(value any, name string) error {
 	m.TryRemoveOnUpdate(value)
 	return m.Migrator.CreateConstraint(value, name)
 }
 
-func (m Migrator) DropConstraint(value interface{}, name string) error {
+func (m Migrator) DropConstraint(value any, name string) error {
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		for _, chk := range stmt.Schema.ParseCheckConstraints() {
 			if chk.Name == name {
@@ -520,7 +521,7 @@ func (m Migrator) DropConstraint(value interface{}, name string) error {
 	})
 }
 
-func (m Migrator) HasConstraint(value interface{}, name string) bool {
+func (m Migrator) HasConstraint(value any, name string) bool {
 	var count int64
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		return m.DB.Raw(
@@ -529,7 +530,7 @@ func (m Migrator) HasConstraint(value interface{}, name string) bool {
 	}) == nil && count > 0
 }
 
-func (m Migrator) DropIndex(value interface{}, name string) error {
+func (m Migrator) DropIndex(value any, name string) error {
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		if idx := stmt.Schema.LookIndex(name); idx != nil {
 			name = idx.Name
@@ -539,7 +540,7 @@ func (m Migrator) DropIndex(value interface{}, name string) error {
 	})
 }
 
-func (m Migrator) HasIndex(value interface{}, name string) bool {
+func (m Migrator) HasIndex(value any, name string) bool {
 	var count int64
 	m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		if idx := stmt.Schema.LookIndex(name); idx != nil {
@@ -559,7 +560,7 @@ func (m Migrator) HasIndex(value interface{}, name string) bool {
 }
 
 // https://docs.oracle.com/database/121/SPATL/alter-index-rename.htm
-func (m Migrator) RenameIndex(value interface{}, oldName, newName string) error {
+func (m Migrator) RenameIndex(value any, oldName, newName string) error {
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		return m.DB.Exec(
 			"ALTER INDEX ? RENAME TO ?", // wat
@@ -568,7 +569,7 @@ func (m Migrator) RenameIndex(value interface{}, oldName, newName string) error 
 	})
 }
 
-func (m Migrator) TryRemoveOnUpdate(values ...interface{}) error {
+func (m Migrator) TryRemoveOnUpdate(values ...any) error {
 	for _, value := range values {
 		if err := m.RunWithValue(value, func(stmt *gorm.Statement) error {
 			for _, rel := range stmt.Schema.Relationships.Relations {
@@ -597,30 +598,30 @@ func onUpdateTriggerName(table, fkCol, refCol string) string {
 
 // CreateOnUpdateTrigger 创建 ON UPDATE 触发器
 // Oracle 不支持原生的 ON UPDATE 外键操作，需要通过触发器模拟
-func (m Migrator) CreateOnUpdateTrigger(value interface{}, rel *schema.Relationship) error {
+func (m Migrator) CreateOnUpdateTrigger(value any, rel *schema.Relationship) error {
 	if rel == nil {
 		return fmt.Errorf("relationship is nil")
 	}
-	
+
 	constraint := rel.ParseConstraint()
 	if constraint == nil || constraint.OnUpdate == "" {
 		return nil
 	}
-	
+
 	// 只处理 CASCADE 和 SET NULL
 	if constraint.OnUpdate != "CASCADE" && constraint.OnUpdate != "SET NULL" {
 		return nil
 	}
-	
+
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		triggerName := onUpdateTriggerName(
 			stmt.Schema.Table,
 			rel.Field.DBName,
 			constraint.References[0].DBName,
 		)
-		
+
 		var triggerSQL string
-		
+
 		if constraint.OnUpdate == "CASCADE" {
 			// CASCADE: 当父表更新时，子表相应字段也更新
 			triggerSQL = fmt.Sprintf(`
@@ -657,28 +658,28 @@ func (m Migrator) CreateOnUpdateTrigger(value interface{}, rel *schema.Relations
 				constraint.References[0].DBName,
 			)
 		}
-		
+
 		if triggerSQL != "" {
 			return m.DB.Exec(triggerSQL).Error
 		}
-		
+
 		return nil
 	})
 }
 
 // DropOnUpdateTrigger 删除 ON UPDATE 触发器
-func (m Migrator) DropOnUpdateTrigger(value interface{}, rel *schema.Relationship) error {
+func (m Migrator) DropOnUpdateTrigger(value any, rel *schema.Relationship) error {
 	if rel == nil {
 		return fmt.Errorf("relationship is nil")
 	}
-	
+
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		triggerName := onUpdateTriggerName(
 			stmt.Schema.Table,
 			rel.Field.DBName,
 			rel.Field.DBName,
 		)
-		
+
 		// Oracle 不支持 DROP TRIGGER IF EXISTS（MySQL/PostgreSQL 语法）。
 		// 用 PL/SQL 块先检查触发器是否存在，避免 ORA-04080（触发器不存在）导致删表流程中断。
 		return m.DB.Exec(fmt.Sprintf(`BEGIN

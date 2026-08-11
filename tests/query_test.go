@@ -62,7 +62,7 @@ func TestQueryWithLimit(t *testing.T) {
 	clearTable(t, "TEST_USERS")
 
 	// 创建测试数据
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		user := User{
 			Name:  "Limit Test",
 			Email: "limit" + string(rune('a'+i)) + "@example.com",

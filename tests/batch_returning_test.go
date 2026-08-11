@@ -105,7 +105,7 @@ func TestCreateInBatchesWithOmit(t *testing.T) {
 
 	// 11 条记录，batchSize=3，跨 4 批；BlackID 赋非零值但被 Omit
 	records := make([]BlackListModel, 0, 11)
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		records = append(records, BlackListModel{BlackID: uint(i + 1), Name: "Omit-" + string(rune('A'+i))})
 	}
 
@@ -158,7 +158,7 @@ func (StrDefaultModel) TableName() string {
 // ID 用序列+触发器回填，code 列用 DEFAULT 'INIT'。
 func TestCreateBatchStrDefault(t *testing.T) {
 	// 原生 SQL 清理（带重试，避免偶发的 DDL 锁）
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if err := DB.Exec("DROP TABLE TEST_STR_DEF PURGE").Error; err == nil {
 			break
 		}
@@ -233,7 +233,7 @@ func (BlackDefaultModel) TableName() string {
 // TestCreateInBatchesOmitDefaultField Omit 一个带 DB 默认值的字段（在 FieldsWithDefaultDBValue 中）
 // 后 CreateInBatches 批量插入。
 func TestCreateInBatchesOmitDefaultField(t *testing.T) {
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if err := DB.Exec("DROP TABLE TEST_BLACK_DEF PURGE").Error; err == nil {
 			break
 		}
@@ -266,7 +266,7 @@ END;`).Error; err != nil {
 	}()
 
 	records := make([]BlackDefaultModel, 0, 6)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		records = append(records, BlackDefaultModel{BlackID: uint(i + 1), Name: "BD-" + string(rune('A'+i))})
 	}
 	result := DB.Omit("BlackID").CreateInBatches(records, 3)
@@ -298,7 +298,7 @@ func (TimeDefaultModel) TableName() string {
 
 // TestCreateBatchTimeDefault 时间戳默认值字段批量插入（RETURNING 输出 DATE）。
 func TestCreateBatchTimeDefault(t *testing.T) {
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if err := DB.Exec("DROP TABLE TEST_TIME_DEF PURGE").Error; err == nil {
 			break
 		}
@@ -592,7 +592,7 @@ func TestCreateBatchReturningIntoLarge(t *testing.T) {
 	defer teardownSeqBatchTable()
 
 	items := make([]SeqBatchModel, 0, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		items = append(items, SeqBatchModel{Name: "Batch L"})
 	}
 

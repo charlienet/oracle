@@ -20,7 +20,7 @@ const (
 // OutParam 输出参数接口，用于 RETURNING INTO 子句
 type OutParam interface {
 	// GetDest 返回目标指针
-	GetDest() interface{}
+	GetDest() any
 	// SetSize 设置缓冲区大小（用于字符串类型）
 	SetSize(size int)
 	// GetSize 获取缓冲区大小
@@ -46,7 +46,7 @@ type BatchData interface {
 	// Len 返回数据长度
 	Len() int
 	// GetValues 返回所有值
-	GetValues() []interface{}
+	GetValues() []any
 }
 
 // Adapter 驱动适配器接口
@@ -64,7 +64,7 @@ type Adapter interface {
 	// CreateOutParam 创建输出参数（用于 RETURNING INTO）
 	// dest: 目标指针
 	// size: 缓冲区大小（字符串类型需要）
-	CreateOutParam(dest interface{}, size int) OutParam
+	CreateOutParam(dest any, size int) OutParam
 
 	// CreateClob 创建 CLOB 数据
 	CreateClob(value string) LobData
@@ -73,7 +73,7 @@ type Adapter interface {
 	CreateBlob(value []byte) LobData
 
 	// CreateBatch 创建批量数据
-	CreateBatch(values []interface{}) BatchData
+	CreateBatch(values []any) BatchData
 
 	// NeedsSizeForOut 返回输出参数是否需要指定 Size
 	// go-ora 对字符串类型的 Out 参数需要指定 Size
@@ -90,17 +90,17 @@ type Adapter interface {
 
 	// WrapClobForInsert 包装 CLOB 值用于插入
 	// 某些驱动需要特殊包装
-	WrapClobForInsert(value string) interface{}
+	WrapClobForInsert(value string) any
 
 	// WrapBlobForInsert 包装 BLOB 值用于插入
-	WrapBlobForInsert(value []byte) interface{}
+	WrapBlobForInsert(value []byte) any
 
 	// UnwrapQueryResult 解包查询结果
 	// 将驱动特定的类型转换为标准 Go 类型
-	UnwrapQueryResult(value interface{}, typeName string) interface{}
+	UnwrapQueryResult(value any, typeName string) any
 
 	// GetConnection 获取底层连接（用于高级操作）
-	GetConnection(db *sql.DB) (interface{}, error)
+	GetConnection(db *sql.DB) (any, error)
 
 	// Ping 检查连接是否可用
 	Ping(ctx context.Context, db *sql.DB) error

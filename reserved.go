@@ -26,8 +26,8 @@ var ReservedWordsList = []string{
 }
 
 // 辅助函数：将字符串切片转换为接口切片
-func MapStringToInterface(slice []string) []interface{} {
-	result := make([]interface{}, len(slice))
+func MapStringToInterface(slice []string) []any {
+	result := make([]any, len(slice))
 	for i, v := range slice {
 		result[i] = v
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,7 +19,7 @@ import (
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/migrator"
 	"gorm.io/gorm/schema"
-	
+
 	"github.com/charlienet/oracle/driver_adapter"
 	oracleUtils "github.com/charlienet/oracle/utils"
 )
@@ -76,8 +77,8 @@ type Config struct {
 	DefaultStringSize    uint
 	DBName               string
 	DBVer                string
-	DriverType           driver_adapter.DriverType  // 新增：驱动类型（go-ora 或 godror）
-	SkipQuoteIdentifiers bool                       // 新增：是否跳过标识符引用
+	DriverType           driver_adapter.DriverType // 新增：驱动类型（go-ora 或 godror）
+	SkipQuoteIdentifiers bool                      // 新增：是否跳过标识符引用
 }
 
 type Dialector struct {
@@ -153,9 +154,7 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 		return
 	}
 
-	for k, v := range d.ClauseBuilders() {
-		db.ClauseBuilders[k] = v
-	}
+	maps.Copy(db.ClauseBuilders, d.ClauseBuilders())
 	return
 }
 
@@ -315,7 +314,7 @@ func (d Dialector) Migrator(db *gorm.DB) gorm.Migrator {
 	}
 }
 
-func (d Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement, v interface{}) {
+func (d Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement, v any) {
 	writer.WriteString(":")
 	writer.WriteString(strconv.Itoa(len(stmt.Vars)))
 }
@@ -325,7 +324,7 @@ func (d Dialector) QuoteTo(writer clause.Writer, str string) {
 		writer.WriteString(str)
 		return
 	}
-	
+
 	if str != "" && IsReservedWord(str) {
 		writer.WriteByte('"')
 		writer.WriteString(str)
@@ -337,8 +336,8 @@ func (d Dialector) QuoteTo(writer clause.Writer, str string) {
 
 var numericPlaceholder = regexp.MustCompile(`:(\d+)`)
 
-func (d Dialector) Explain(sql string, vars ...interface{}) string {
-	return logger.ExplainSQL(sql, numericPlaceholder, `'`, oracleUtils.MapInterface(vars, func(v interface{}) interface{} {
+func (d Dialector) Explain(sql string, vars ...any) string {
+	return logger.ExplainSQL(sql, numericPlaceholder, `'`, oracleUtils.MapInterface(vars, func(v any) any {
 		switch v := v.(type) {
 		case bool:
 			if v {

@@ -44,7 +44,7 @@ func Delete(db *gorm.DB) {
 	for _, field := range schema.Fields {
 		if field.GORMDataType == "time" &&
 			(field.Name == "DeletedAt" || field.DBName == "deleted_at" ||
-				reflect.TypeOf(field.FieldType) == reflect.TypeOf(gorm.DeletedAt{})) {
+				reflect.TypeOf(field.FieldType) == reflect.TypeFor[gorm.DeletedAt]()) {
 			softDeleteField = field
 			break
 		}
@@ -62,29 +62,29 @@ func Delete(db *gorm.DB) {
 func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[string]int, pkValues int) {
 	stmt := db.Statement
 	schema := stmt.Schema
-	
+
 	hasDefaultValues := len(schema.FieldsWithDefaultDBValue) > 0
 	// 多行删除时 Oracle 不支持单行 RETURNING INTO，只有单行删除才启用 RETURNING
 	if pkValues != 1 {
 		hasDefaultValues = false
 	}
-	
+
 	if !stmt.Unscoped {
 		for _, c := range schema.DeleteClauses {
 			stmt.AddClause(c)
 		}
 	}
-	
+
 	if stmt.SQL.String() == "" {
 		// 构建 UPDATE 语句而不是 DELETE
 		stmt.AddClauseIfNotExists(clause.Update{Table: clause.Table{Name: stmt.Schema.Table}})
-		
+
 		// 构建 SET 子句，设置 deleted_at 为当前时间
 		now := db.NowFunc()
 		convertedNow := convertValue(now, field)
 		set := clause.Set{clause.Assignment{Column: clause.Column{Name: field.DBName}, Value: convertedNow}}
 		stmt.AddClause(set)
-		
+
 		// 添加 RETURNING 子句（如果有默认值字段或需要返回值）
 		if hasDefaultValues {
 			stmt.AddClauseIfNotExists(clause.Returning{
@@ -93,10 +93,10 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 				}),
 			})
 		}
-		
+
 		// 构建语句
 		stmt.Build("UPDATE", "SET", "WHERE", "RETURNING")
-		
+
 		// 如果有 RETURNING 子句，添加 INTO 子句
 		if hasDefaultValues {
 			stmt.WriteString(" INTO ")
@@ -115,7 +115,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 		var tx *sql.Tx
 		var err error
 		var isTransaction bool = false
-		
+
 		// 检查是否已经在一个事务中
 		if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
 			tx = sqlTx
@@ -151,7 +151,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
 			return
 		}
-		
+
 		db.RowsAffected, _ = result.RowsAffected()
 
 		// 处理 RETURNING 返回值
@@ -182,7 +182,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 						if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 							keyValue := reflect.ValueOf(field.DBName)
 							destValue := reflect.ValueOf(outDest(stmt.Vars, boundVars[field.Name]))
-							if destValue.Kind() == reflect.Ptr {
+							if destValue.Kind() == reflect.Pointer {
 								destValue = destValue.Elem()
 							}
 							mapValue.SetMapIndex(keyValue, destValue)
@@ -197,24 +197,24 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 	stmt := db.Statement
 	schema := stmt.Schema
-	
+
 	hasDefaultValues := len(schema.FieldsWithDefaultDBValue) > 0
 	// 多行删除时 Oracle 不支持单行 RETURNING INTO，只有单行删除才启用 RETURNING
 	if pkValues != 1 {
 		hasDefaultValues = false
 	}
-	
+
 	if !stmt.Unscoped {
 		for _, c := range schema.DeleteClauses {
 			stmt.AddClause(c)
 		}
 	}
-	
+
 	if stmt.SQL.String() == "" {
 		// 构建 DELETE 语句
 		stmt.AddClauseIfNotExists(clause.Delete{})
 		stmt.AddClauseIfNotExists(clause.From{Tables: []clause.Table{{Name: stmt.Schema.Table}}})
-		
+
 		// 添加 RETURNING 子句（如果有默认值字段或需要返回值）
 		if hasDefaultValues {
 			stmt.AddClauseIfNotExists(clause.Returning{
@@ -223,10 +223,10 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 				}),
 			})
 		}
-		
+
 		// 构建语句
 		stmt.Build("DELETE", "FROM", "WHERE", "RETURNING")
-		
+
 		// 如果有 RETURNING 子句，添加 INTO 子句
 		if hasDefaultValues {
 			stmt.WriteString(" INTO ")
@@ -245,7 +245,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 		var tx *sql.Tx
 		var err error
 		var isTransaction bool = false
-		
+
 		// 检查是否已经在一个事务中
 		if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
 			tx = sqlTx
@@ -281,7 +281,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
 			return
 		}
-		
+
 		db.RowsAffected, _ = result.RowsAffected()
 
 		// 处理 RETURNING 返回值
@@ -312,7 +312,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 						if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 							keyValue := reflect.ValueOf(field.DBName)
 							destValue := reflect.ValueOf(outDest(stmt.Vars, boundVars[field.Name]))
-							if destValue.Kind() == reflect.Ptr {
+							if destValue.Kind() == reflect.Pointer {
 								destValue = destValue.Elem()
 							}
 							mapValue.SetMapIndex(keyValue, destValue)
