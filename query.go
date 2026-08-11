@@ -3,11 +3,47 @@ package oracle
 import (
 	"reflect"
 	"strings"
+	"sync"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
 	gormSchema "gorm.io/gorm/schema"
 )
+
+// schema 补键的并发保护与已补键标记。
+// gorm 的 schema 是全局缓存且解析后只读，这里在首次查询时一次性给
+// FieldsByDBName 补充大写列名键，之后所有查询只读，无数据竞争。
+var (
+	schemaPatchMu   sync.Mutex
+	schemaPatched   = map[*gormSchema.Schema]bool{}
+)
+
+// patchUpperDBNameKeys 为 schema 的 FieldsByDBName 补充大写列名键。
+//
+// 问题背景：Oracle 返回大写列名（如 FIRST_NAME），而模型若用显式
+// `gorm:"column:first_name"`（小写）tag，字段 DBName 是小写。gorm 查询
+// scan 时用 schema.LookUpField(column) 按大写列名匹配字段，找不到小写
+// DBName 的字段，导致该列不回填（虚拟列等显式小写 tag 的字段全部为空）。
+// 这里补充 大写DBName -> 字段 的别名键，使 LookUpField 能匹配。
+func patchUpperDBNameKeys(s *gormSchema.Schema) {
+	if s == nil {
+		return
+	}
+	schemaPatchMu.Lock()
+	defer schemaPatchMu.Unlock()
+	if schemaPatched[s] {
+		return
+	}
+	schemaPatched[s] = true
+	for _, field := range s.Fields {
+		upper := strings.ToUpper(field.DBName)
+		if upper != field.DBName {
+			if _, exists := s.FieldsByDBName[upper]; !exists {
+				s.FieldsByDBName[upper] = field
+			}
+		}
+	}
+}
 
 // Query 是 Oracle 特定的查询回调函数
 // 处理查询前后的数据转换和列名映射
@@ -20,10 +56,13 @@ func Query(db *gorm.DB) {
 	// 1. 查询前处理
 	preprocessQuery(db)
 
-	// 2. 执行查询（调用默认回调）
+	// 2. 补充大写列名键，保证 gorm scan 能匹配显式小写 column tag 的字段
+	patchUpperDBNameKeys(stmt.Schema)
+
+	// 3. 执行查询（调用默认回调）
 	callbacks.Query(db)
 
-	// 3. 查询后处理
+	// 4. 查询后处理
 	if db.Error == nil {
 		postprocessQuery(db)
 	}
@@ -56,7 +95,7 @@ func postprocessQuery(db *gorm.DB) {
 
 	// 获取反射值
 	rv := reflect.ValueOf(dest)
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		rv = rv.Elem()
 	}
 
@@ -91,7 +130,7 @@ func processRecord(rv reflect.Value, schema *gormSchema.Schema, columnToField ma
 	}
 
 	// 如果是指针，获取指向的元素
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
 			// 如果指针为nil，尝试创建一个实例
 			rv.Set(reflect.New(rv.Type().Elem()))
@@ -154,7 +193,7 @@ func findSchemaFieldByStructField(schema *gormSchema.Schema, structField *reflec
 }
 
 // setFieldValue 安全地设置字段值
-func setFieldValue(fieldValue reflect.Value, value interface{}) {
+func setFieldValue(fieldValue reflect.Value, value any) {
 	if value == nil || !fieldValue.IsValid() || !fieldValue.CanSet() {
 		return
 	}
@@ -163,7 +202,7 @@ func setFieldValue(fieldValue reflect.Value, value interface{}) {
 	v := reflect.ValueOf(value)
 
 	// 处理特殊情况：当目标字段是指针时
-	if fieldValue.Kind() == reflect.Ptr {
+	if fieldValue.Kind() == reflect.Pointer {
 		// 如果值是 nil，直接设置为 nil
 		if value == nil {
 			fieldValue.Set(reflect.Zero(fieldValue.Type()))
@@ -171,7 +210,7 @@ func setFieldValue(fieldValue reflect.Value, value interface{}) {
 		}
 
 		// 如果目标是指针但值不是指针，需要创建一个指针
-		if v.Kind() != reflect.Ptr {
+		if v.Kind() != reflect.Pointer {
 			ptr := reflect.New(fieldValue.Type().Elem())
 			ptr.Elem().Set(reflect.ValueOf(value))
 			fieldValue.Set(ptr)
@@ -205,7 +244,7 @@ func setFieldValue(fieldValue reflect.Value, value interface{}) {
 }
 
 // isZeroValue 检查值是否为零值
-func isZeroValue(value interface{}) bool {
+func isZeroValue(value any) bool {
 	if value == nil {
 		return true
 	}
@@ -222,7 +261,7 @@ func isZeroValue(value interface{}) bool {
 		return v.Float() == 0
 	case reflect.Bool:
 		return !v.Bool()
-	case reflect.Ptr, reflect.Interface:
+	case reflect.Pointer, reflect.Interface:
 		return v.IsNil()
 	}
 

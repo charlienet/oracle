@@ -15,7 +15,7 @@ import (
 // dropTableNative 原生 SQL 清理表（带重试，规避偶发 DDL 锁）
 func dropTableNative(t *testing.T, table string) {
 	t.Helper()
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		err := DB.Exec("DROP TABLE " + table + " PURGE").Error
 		if err == nil {
 			return
@@ -126,7 +126,7 @@ func TestDropOnUpdateTrigger(t *testing.T) {
 	}
 	m := DB.Migrator()
 	dm, ok := m.(interface {
-		DropOnUpdateTrigger(value interface{}, rel *schema.Relationship) error
+		DropOnUpdateTrigger(value any, rel *schema.Relationship) error
 	})
 	if !ok {
 		t.Fatal("Migrator does not implement DropOnUpdateTrigger")
@@ -286,5 +286,68 @@ func TestSoftDeleteCustomFieldName(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("expected row soft-deleted (keep row), got count=%d", count)
+	}
+}
+
+// ---------- 虚拟列 + 显式小写 column tag 查询回填 ----------
+
+// VirtualColumnModel 验证两类能力：
+//  1. 虚拟列（11g+ GENERATED ALWAYS AS ... VIRTUAL）：建表时把表达式写在
+//     type: 中，DataTypeOf 原样输出；插入时 `->` 只读字段被跳过。
+//  2. 显式小写 column tag（column:first_name）：Oracle 返回大写列名，
+//     依赖 query.go 的 patchUpperDBNameKeys 补充大写键才能 scan 回填。
+type VirtualColumnModel struct {
+	ID        uint   `gorm:"column:id;primaryKey"`
+	FirstName string `gorm:"column:first_name;size:50"`
+	LastName  string `gorm:"column:last_name;size:50"`
+	FullName  string `gorm:"column:full_name;->;type:GENERATED ALWAYS AS (first_name || ' ' || last_name) VIRTUAL"`
+}
+
+func (VirtualColumnModel) TableName() string { return "TEST_VIRTUAL_COL" }
+
+// TestVirtualColumnAndLowercaseTag 验证虚拟列建表/插入/查询回填，以及
+// 显式小写 column tag 字段的查询回填（Oracle 大写列名 vs 小写 DBName）。
+func TestVirtualColumnAndLowercaseTag(t *testing.T) {
+	dropTableNative(t, "TEST_VIRTUAL_COL")
+	dropSequencesLike(t, "SEQ_TEST_VIRTUAL_COL%")
+	if err := DB.AutoMigrate(&VirtualColumnModel{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+	defer func() {
+		dropTableNative(t, "TEST_VIRTUAL_COL")
+		dropSequencesLike(t, "SEQ_TEST_VIRTUAL_COL%")
+	}()
+
+	// 确认虚拟列已创建（DATA_DEFAULT 含表达式）
+	var dataDefault string
+	if err := DB.Raw(`SELECT DATA_DEFAULT FROM USER_TAB_COLUMNS WHERE TABLE_NAME='TEST_VIRTUAL_COL' AND COLUMN_NAME='FULL_NAME'`).Scan(&dataDefault).Error; err != nil {
+		t.Fatalf("failed to query virtual column: %v", err)
+	}
+	if !strings.Contains(dataDefault, "FIRST_NAME") {
+		t.Errorf("expected virtual column expression, got DATA_DEFAULT=%q", dataDefault)
+	}
+
+	// 插入：full_name 只读，应被跳过；first_name/last_name 正常
+	m := VirtualColumnModel{FirstName: "John", LastName: "Doe"}
+	if err := DB.Create(&m).Error; err != nil {
+		t.Fatalf("failed to create: %v", err)
+	}
+	if m.ID == 0 {
+		t.Error("expected ID set")
+	}
+
+	// 查询回填：小写 column tag 字段 + 虚拟列都应正确
+	var out VirtualColumnModel
+	if err := DB.First(&out, m.ID).Error; err != nil {
+		t.Fatalf("failed to first: %v", err)
+	}
+	if out.FirstName != "John" {
+		t.Errorf("expected FirstName backfilled, got %q", out.FirstName)
+	}
+	if out.LastName != "Doe" {
+		t.Errorf("expected LastName backfilled, got %q", out.LastName)
+	}
+	if out.FullName != "John Doe" {
+		t.Errorf("expected virtual column value 'John Doe', got %q", out.FullName)
 	}
 }
