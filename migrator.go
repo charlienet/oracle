@@ -19,7 +19,7 @@ type Migrator struct {
 // oracleDBVer 返回当前数据库版本号（用于版本感知的默认值处理）。
 // m.Dialector 是 gorm.Dialector 接口，需断言为 oracle.Dialector 获取 DBVer。
 func (m Migrator) oracleDBVer() string {
-	if d, ok := m.Dialector.(Dialector); ok {
+	if d, ok := m.Dialector.(*Dialector); ok {
 		return d.DBVer
 	}
 	return ""
@@ -34,14 +34,13 @@ func hasNEXTVALDefault(field *schema.Field) bool {
 
 func (m Migrator) CurrentDatabase() (name string) {
 	m.DB.Raw(
-		fmt.Sprintf(`SELECT ORA_DATABASE_NAME as "Current Database" FROM %s`, m.Dialector.(Dialector).DummyTableName()),
+		fmt.Sprintf(`SELECT ORA_DATABASE_NAME as "Current Database" FROM %s`, m.Dialector.(*Dialector).DummyTableName()),
 	).Row().Scan(&name)
 	return
 }
 
 func (m Migrator) CreateTable(values ...interface{}) error {
 	for _, value := range values {
-		m.TryQuotifyReservedWords(value)
 		m.TryRemoveOnUpdate(value)
 	}
 	
@@ -111,18 +110,28 @@ func (m Migrator) CreateTable(values ...interface{}) error {
 
 // sequenceName 返回自增主键对应的序列名
 func (m Migrator) sequenceName(table string) string {
-	return fmt.Sprintf("SEQ_%s", table)
+	name := fmt.Sprintf("SEQ_%s", table)
+	// Oracle 标识符最多 30 字符，超长时截断避免 ORA-00972
+	if len(name) > 30 {
+		name = name[:30]
+	}
+	return name
 }
 
 // triggerName 返回自增主键对应的触发器名
 func (m Migrator) triggerName(table string) string {
-	return fmt.Sprintf("TRG_%s", table)
+	name := fmt.Sprintf("TRG_%s", table)
+	// Oracle 标识符最多 30 字符，超长时截断避免 ORA-00972
+	if len(name) > 30 {
+		name = name[:30]
+	}
+	return name
 }
 
 // createAutoIncrementSupport 为自增主键创建序列和 BEFORE INSERT 触发器（仅不支持 IDENTITY 的版本）
 func (m Migrator) createAutoIncrementSupport(value interface{}) error {
 	// 12c+ 原生支持 IDENTITY 列，无需序列 + 触发器模拟
-	if d, ok := m.Dialector.(Dialector); ok && supportsIdentity(d.DBVer) {
+	if d, ok := m.Dialector.(*Dialector); ok && supportsIdentity(d.DBVer) {
 		return nil
 	}
 
@@ -225,7 +234,8 @@ func (m Migrator) DropTable(values ...interface{}) error {
 		tx := m.DB.Session(&gorm.Session{})
 		if m.HasTable(value) {
 			if err := m.RunWithValue(value, func(stmt *gorm.Statement) error {
-				if err := tx.Exec("DROP TABLE ? CASCADE CONSTRAINTS", clause.Table{Name: stmt.Table}).Error; err != nil {
+				// PURGE：避免表进入回收站，防止同名重建时报 ORA-00955
+				if err := tx.Exec("DROP TABLE ? CASCADE CONSTRAINTS PURGE", clause.Table{Name: stmt.Table}).Error; err != nil {
 					return err
 				}
 				// 删除自增序列
@@ -263,7 +273,8 @@ func (m Migrator) ColumnTypes(value interface{}) ([]gorm.ColumnType, error) {
 		}
 
 		defer func() {
-			err = rows.Close()
+			// Close 错误不应覆盖已成功收集的返回值
+			_ = rows.Close()
 		}()
 
 		var rawColumnTypes []*sql.ColumnType
@@ -336,7 +347,7 @@ func (m Migrator) RenameTable(oldName, newName interface{}) (err error) {
 		return
 	}
 
-	return m.DB.Exec("RENAME TABLE ? TO ?",
+	return m.DB.Exec("RENAME ? TO ?",
 		clause.Table{Name: oldTable},
 		clause.Table{Name: newTable},
 	).Error
@@ -574,26 +585,14 @@ func (m Migrator) TryRemoveOnUpdate(values ...interface{}) error {
 	return nil
 }
 
-func (m Migrator) TryQuotifyReservedWords(values ...interface{}) error {
-	for _, value := range values {
-		if err := m.RunWithValue(value, func(stmt *gorm.Statement) error {
-			for idx, v := range stmt.Schema.DBNames {
-				if IsReservedWord(v) {
-					stmt.Schema.DBNames[idx] = fmt.Sprintf(`"%s"`, v)
-				}
-			}
-
-			for _, v := range stmt.Schema.Fields {
-				if IsReservedWord(v.DBName) {
-					v.DBName = fmt.Sprintf(`"%s"`, v.DBName)
-				}
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
+// onUpdateTriggerName 生成 ON UPDATE 触发器名。
+// Oracle 标识符最多 30 字符，超长时截断避免 ORA-00972。
+func onUpdateTriggerName(table, fkCol, refCol string) string {
+	name := fmt.Sprintf("fk_trigger_%s_%s_%s", table, fkCol, refCol)
+	if len(name) > 30 {
+		name = name[:30]
 	}
-	return nil
+	return name
 }
 
 // CreateOnUpdateTrigger 创建 ON UPDATE 触发器
@@ -614,8 +613,8 @@ func (m Migrator) CreateOnUpdateTrigger(value interface{}, rel *schema.Relations
 	}
 	
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
-		triggerName := fmt.Sprintf("fk_trigger_%s_%s_%s", 
-			stmt.Schema.Table, 
+		triggerName := onUpdateTriggerName(
+			stmt.Schema.Table,
 			rel.Field.DBName,
 			constraint.References[0].DBName,
 		)
@@ -674,12 +673,19 @@ func (m Migrator) DropOnUpdateTrigger(value interface{}, rel *schema.Relationshi
 	}
 	
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
-		triggerName := fmt.Sprintf("fk_trigger_%s_%s_%s",
+		triggerName := onUpdateTriggerName(
 			stmt.Schema.Table,
 			rel.Field.DBName,
 			rel.Field.DBName,
 		)
 		
-		return m.DB.Exec(fmt.Sprintf("DROP TRIGGER IF EXISTS %s", triggerName)).Error
+		// Oracle 不支持 DROP TRIGGER IF EXISTS（MySQL/PostgreSQL 语法）。
+		// 用 PL/SQL 块先检查触发器是否存在，避免 ORA-04080（触发器不存在）导致删表流程中断。
+		return m.DB.Exec(fmt.Sprintf(`BEGIN
+	EXECUTE IMMEDIATE 'DROP TRIGGER %s';
+EXCEPTION
+	WHEN OTHERS THEN
+		IF SQLCODE != -4080 THEN RAISE; END IF;
+END;`, triggerName)).Error
 	})
 }

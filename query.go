@@ -36,9 +36,9 @@ func preprocessQuery(db *gorm.DB) {
 		return
 	}
 
-	// 在 Oracle 中，某些查询可能需要特定的 hint 或优化
-	// 当前主要处理 LIMIT/OFFSET 重写（已在 ClauseBuilders 中处理）
-	// 可以根据需要添加更多预处理逻辑
+	// 预留扩展点：当前查询无需额外预处理，
+	// LIMIT/OFFSET 重写已在 ClauseBuilders 中处理。
+	// 后续如需 hint/优化可在本函数中添加。
 }
 
 // postprocessQuery 处理查询后的结果转换
@@ -60,19 +60,27 @@ func postprocessQuery(db *gorm.DB) {
 		rv = rv.Elem()
 	}
 
+	// 构建一次列名到字段的映射（Oracle 返回大写列名），避免每行重复构建
+	columnToField := make(map[string]*gormSchema.Field)
+	for _, field := range stmt.Schema.Fields {
+		if field.DBName != "" {
+			columnToField[strings.ToUpper(field.DBName)] = field
+		}
+	}
+
 	// 处理单条记录或列表
 	switch rv.Kind() {
 	case reflect.Slice:
 		for i := 0; i < rv.Len(); i++ {
-			processRecord(rv.Index(i), stmt.Schema)
+			processRecord(rv.Index(i), stmt.Schema, columnToField)
 		}
 	case reflect.Struct:
-		processRecord(rv, stmt.Schema)
+		processRecord(rv, stmt.Schema, columnToField)
 	}
 }
 
 // processRecord 处理单条记录的字段值转换
-func processRecord(rv reflect.Value, schema *gormSchema.Schema) {
+func processRecord(rv reflect.Value, schema *gormSchema.Schema, columnToField map[string]*gormSchema.Field) {
 	if !rv.IsValid() {
 		return
 	}
@@ -95,15 +103,6 @@ func processRecord(rv reflect.Value, schema *gormSchema.Schema) {
 
 	if rv.Kind() != reflect.Struct {
 		return
-	}
-
-	// 创建列名到字段的映射，处理大小写问题
-	columnToField := make(map[string]*gormSchema.Field)
-	for _, field := range schema.Fields {
-		if field.DBName != "" {
-			// Oracle 默认返回大写列名，所以将字段的 DBName 转为大写作为键
-			columnToField[strings.ToUpper(field.DBName)] = field
-		}
 	}
 
 	// 遍历结构体字段进行处理

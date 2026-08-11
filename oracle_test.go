@@ -318,8 +318,7 @@ func TestQuoteTo(t *testing.T) {
 		{"plain identifier", "USER_NAME", "USER_NAME"},
 		{"lowercase identifier", "user_name", "user_name"},
 		{"empty string", "", ""},
-		// 注意：SELECT 不在 reserved.go 的 ReservedWordsList 中，不会被加引号
-		{"SELECT is not in reserved list", "SELECT", "SELECT"},
+		{"reserved word SELECT", "SELECT", `"SELECT"`},
 		{"reserved word FROM", "FROM", `"FROM"`},
 		{"reserved word WHERE", "WHERE", `"WHERE"`},
 		{"reserved word ORDER", "ORDER", `"ORDER"`},

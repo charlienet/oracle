@@ -20,15 +20,17 @@ func TestWhenMatchedBuild(t *testing.T) {
 	}
 
 	sql := buildSQL(t, w)
-	// 期望: THEN UPDATE WHEN MATCHED SET name=:1
+	// 期望: THEN UPDATE SET name=:1（"WHEN MATCHED" 前缀由 gorm 的 clause.Clause.Build 输出）
 	for _, want := range []string{
 		"THEN UPDATE",
-		"WHEN MATCHED",
 		"SET name=:1",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("WhenMatched SQL %q does not contain %q", sql, want)
 		}
+	}
+	if strings.Contains(sql, "WHEN MATCHED") {
+		t.Errorf("WhenMatched direct Build should not repeat clause name, got %q", sql)
 	}
 }
 
@@ -58,10 +60,9 @@ func TestWhenMatchedBuildWithWhereAndDelete(t *testing.T) {
 	}
 
 	sql := buildSQL(t, w)
-	// 期望: THEN UPDATE WHEN MATCHED SET name=:1WHERE id = :2 DELETE WHERE flag = :3
+	// 期望: THEN UPDATE SET name=:1 WHERE id = :2 DELETE WHERE flag = :3
 	for _, want := range []string{
 		"THEN UPDATE",
-		"WHEN MATCHED",
 		"SET name=:1",
 		"WHERE id = :2",
 		"DELETE WHERE flag = :3",

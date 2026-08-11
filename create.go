@@ -13,7 +13,6 @@ import (
 
 	"github.com/charlienet/oracle/clauses"
 	"github.com/charlienet/oracle/utils"
-	go_ora "github.com/sijms/go-ora/v2"
 )
 
 func Create(db *gorm.DB) {
@@ -60,7 +59,7 @@ func Create(db *gorm.DB) {
 					}), //utils.MapClauseColumn(values.Columns, func(column clause.Column) clause.Column {
 					},
 					clause.From{
-						Tables: []clause.Table{{Name: db.Dialector.(Dialector).DummyTableName()}},
+						Tables: []clause.Table{{Name: db.Dialector.(*Dialector).DummyTableName()}},
 					},
 				},
 				On: utils.MapFieldToExpr(schema.PrimaryFields, func(field *gormSchema.Field) clause.Expression {
@@ -70,10 +69,17 @@ func Create(db *gorm.DB) {
 					}
 				}),
 			})
-			stmt.AddClauseIfNotExists(clauses.WhenMatched{Set: onConflict.DoUpdates})
+			// DoNothing（或空 DoUpdates）时跳过 WHEN MATCHED 子句，
+			// 避免 gorm 的空 Set 兜底输出 PRIMARYKEY=PRIMARYKEY 导致语法错误
+			if len(onConflict.DoUpdates) > 0 {
+				stmt.AddClauseIfNotExists(clauses.WhenMatched{Set: onConflict.DoUpdates})
+			}
 			stmt.AddClauseIfNotExists(clauses.WhenNotMatched{Values: values})
 
 			stmt.Build("MERGE", "WHEN MATCHED", "WHEN NOT MATCHED")
+			// 注意：Oracle 11g 的 MERGE 语句不支持 RETURNING INTO（实测 ORA-00933）。
+			// MERGE 分支仅在主键有值（columns 含主键）时触发，主键 ID 已知无需回填；
+			// 非主键默认值字段（如序列默认列）在此路径下无法回填，属 Oracle 限制。
 		} else {
 			stmt.AddClauseIfNotExists(clause.Insert{Table: clause.Table{Name: stmt.Schema.Table}})
 			stmt.AddClause(clause.Values{Columns: values.Columns, Values: [][]interface{}{values.Values[0]}})
@@ -92,7 +98,7 @@ func Create(db *gorm.DB) {
 						stmt.WriteByte(',')
 					}
 					boundVars[field.Name] = len(stmt.Vars)
-					stmt.AddVar(stmt, go_ora.Out{Dest: reflect.New(field.FieldType).Interface(), Size: outParamSize(field)})
+					stmt.AddVar(stmt, outParam(field))
 				}
 			}
 		}
@@ -170,7 +176,7 @@ func Create(db *gorm.DB) {
 							func(field *gormSchema.Field) {
 								switch insertTo.Kind() {
 								case reflect.Struct:
-									if err = field.Set(stmt.Context, insertTo, stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest); err != nil {
+									if err = field.Set(stmt.Context, insertTo, outDest(stmt.Vars, boundVars[field.Name])); err != nil {
 										db.AddError(err)
 									}
 								case reflect.Map:
@@ -178,7 +184,7 @@ func Create(db *gorm.DB) {
 									mapValue := reflect.ValueOf(insertTo.Interface())
 									if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 										keyValue := reflect.ValueOf(field.DBName)
-										destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest)
+										destValue := reflect.ValueOf(outDest(stmt.Vars, boundVars[field.Name]))
 										if destValue.Kind() == reflect.Ptr {
 											destValue = destValue.Elem()
 										}
@@ -190,10 +196,7 @@ func Create(db *gorm.DB) {
 					}
 				default: // failure
 					db.AddError(err)
-					// 如果不是在已有事务中，则回滚我们创建的事务
-					if !isTransaction {
-						_ = tx.Rollback()
-					}
+					// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
 					return
 				}
 			}

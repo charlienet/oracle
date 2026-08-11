@@ -2,6 +2,7 @@ package oracle
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -62,17 +63,23 @@ func TestTryRemoveOnUpdateWithoutRelations(t *testing.T) {
 	}
 }
 
-// TestTryQuotifyReservedWords 验证处理保留字列名不报错
-func TestTryQuotifyReservedWords(t *testing.T) {
-	m := newTestMigrator()
+// TestQuoteToReservedWords 验证保留字列名在 SQL 输出时被引号包裹（由 QuoteTo 处理）。
+// 注意：此前 TryQuotifyReservedWords 会直接修改缓存的 schema（DBNames/DBName），
+// 导致 FieldsByDBName 的 key 与 DBName 不一致，gorm CreateTable 时字段查找为 nil 而 panic。
+// 正确做法是依赖 QuoteTo 在输出层处理保留字，不污染共享 schema。
+func TestQuoteToReservedWords(t *testing.T) {
+	d := newTestDialector("11.2.0.4.0", 2000)
 
-	type reservedModel struct {
-		ID     uint   `gorm:"primaryKey"`
-		Select string `gorm:"column:select"`
+	var buf strings.Builder
+	d.QuoteTo(&buf, "SELECT") // 保留字 → 引号包裹
+	if got := buf.String(); got != `"SELECT"` {
+		t.Errorf("QuoteTo(SELECT) = %q, want %q", got, `"SELECT"`)
 	}
 
-	if err := m.TryQuotifyReservedWords(&reservedModel{}); err != nil {
-		t.Fatalf("TryQuotifyReservedWords returned error: %v", err)
+	buf.Reset()
+	d.QuoteTo(&buf, "NAME") // 非保留字 → 原样输出
+	if got := buf.String(); got != "NAME" {
+		t.Errorf("QuoteTo(NAME) = %q, want %q", got, "NAME")
 	}
 }
 

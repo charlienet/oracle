@@ -12,6 +12,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/schema"
+
+	go_ora "github.com/sijms/go-ora/v2"
 )
 
 // outParamSize 计算 RETURNING INTO 输出参数所需的缓冲区大小（字符数/字节数）。
@@ -19,6 +21,8 @@ import (
 // 若 Size 为 0，驱动解析服务器返回值时会错位，导致 "more than one row affected
 // with return clause" 或 "driver: bad connection"（见 go-ora issue #329/#703）。
 // 数字/时间等定长类型不需要 Size。
+// 注意：CLOB 字段的 RETURNING INTO 在 go-ora 下仍以 VARCHAR2 缓冲区处理，
+// 超过 4000 字节的内容可能被截断，属已知限制。
 func outParamSize(field *schema.Field) int {
 	switch field.DataType {
 	case schema.String, schema.Bytes:
@@ -29,6 +33,17 @@ func outParamSize(field *schema.Field) int {
 	default:
 		return 0
 	}
+}
+
+// outParam 构造 RETURNING INTO 输出参数。统一使用 go_ora.Out（可携带 Size），
+// 避免散落的 sql.Out 用法导致字符串输出参数 size=0。
+func outParam(field *schema.Field) go_ora.Out {
+	return go_ora.Out{Dest: reflect.New(field.FieldType).Interface(), Size: outParamSize(field)}
+}
+
+// outDest 读取 RETURNING INTO 输出参数的目标指针
+func outDest(vars []interface{}, pos int) interface{} {
+	return vars[pos].(go_ora.Out).Dest
 }
 
 // convertValue 将 Go 值转换为 Oracle 兼容格式

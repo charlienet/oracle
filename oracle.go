@@ -161,7 +161,9 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 
 func (d Dialector) ClauseBuilders() map[string]clause.ClauseBuilder {
 	dbver, _ := strconv.Atoi(strings.Split(d.DBVer, ".")[0])
-	if dbver > 0 && dbver < 12 {
+	// 版本解析失败（dbver==0）时保守使用 11g 的 ROWNUM 方案，
+	// 避免在 11g 下使用 12c+ 的 FETCH NEXT 语法导致 ORA-00933
+	if dbver == 0 || dbver < 12 {
 		return map[string]clause.ClauseBuilder{
 			"LIMIT": d.RewriteLimit11,
 		}

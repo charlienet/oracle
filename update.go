@@ -10,7 +10,6 @@ import (
 	gormSchema "gorm.io/gorm/schema"
 
 	"github.com/charlienet/oracle/utils"
-	go_ora "github.com/sijms/go-ora/v2"
 )
 
 func Update(db *gorm.DB) {
@@ -118,7 +117,7 @@ func Update(db *gorm.DB) {
 					stmt.WriteByte(',')
 				}
 				boundVars[field.Name] = len(stmt.Vars)
-				stmt.AddVar(stmt, go_ora.Out{Dest: reflect.New(field.FieldType).Interface(), Size: outParamSize(field)})
+				stmt.AddVar(stmt, outParam(field))
 			}
 		}
 	}
@@ -162,10 +161,7 @@ func Update(db *gorm.DB) {
 		result, err := execConn.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
 		if err != nil {
 			db.AddError(err)
-			// 如果不是在已有事务中，则回滚我们创建的事务
-			if !isTransaction {
-				_ = tx.Rollback()
-			}
+			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
 			return
 		}
 		
@@ -190,7 +186,7 @@ func Update(db *gorm.DB) {
 				func(field *gormSchema.Field) {
 					switch updateTo.Kind() {
 					case reflect.Struct:
-						if err = field.Set(stmt.Context, updateTo, stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest); err != nil {
+						if err = field.Set(stmt.Context, updateTo, outDest(stmt.Vars, boundVars[field.Name])); err != nil {
 							db.AddError(err)
 						}
 					case reflect.Map:
@@ -198,7 +194,7 @@ func Update(db *gorm.DB) {
 						mapValue := reflect.ValueOf(updateTo.Interface())
 						if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 							keyValue := reflect.ValueOf(field.DBName)
-							destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest)
+							destValue := reflect.ValueOf(outDest(stmt.Vars, boundVars[field.Name]))
 							if destValue.Kind() == reflect.Ptr {
 								destValue = destValue.Elem()
 							}
@@ -208,38 +204,5 @@ func Update(db *gorm.DB) {
 				},
 			)
 		}
-	}
-}
-
-// 辅助函数：实现 funk.Map 功能
-func MapFieldToColumn(slice []*gormSchema.Field, fn func(*gormSchema.Field) clause.Column) []clause.Column {
-	result := make([]clause.Column, len(slice))
-	for i, v := range slice {
-		result[i] = fn(v)
-	}
-	return result
-}
-
-// 辅助函数：实现 funk.Contains 功能
-func ContainsField(m map[string]int, key string) bool {
-	_, exists := m[key]
-	return exists
-}
-
-// 辅助函数：实现 funk.Filter 功能
-func FilterFields(slice []*gormSchema.Field, fn func(*gormSchema.Field) bool) []*gormSchema.Field {
-	var result []*gormSchema.Field
-	for _, v := range slice {
-		if fn(v) {
-			result = append(result, v)
-		}
-	}
-	return result
-}
-
-// 辅助函数：实现 funk.ForEach 功能
-func ForEachField(slice []*gormSchema.Field, fn func(*gormSchema.Field)) {
-	for _, v := range slice {
-		fn(v)
 	}
 }

@@ -4,14 +4,12 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
-	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	gormSchema "gorm.io/gorm/schema"
 
 	"github.com/charlienet/oracle/utils"
-	go_ora "github.com/sijms/go-ora/v2"
 )
 
 func Delete(db *gorm.DB) {
@@ -41,11 +39,12 @@ func Delete(db *gorm.DB) {
 		return
 	}
 
-	// 2. 检查软删除
+	// 2. 检查软删除（识别 gorm.DeletedAt 类型字段，不局限于 DeletedAt 字段名）
 	var softDeleteField *gormSchema.Field
 	for _, field := range schema.Fields {
-		if (field.DBName == "deleted_at" || field.Name == "DeletedAt") && 
-		   field.GORMDataType == "time" {
+		if field.GORMDataType == "time" &&
+			(field.Name == "DeletedAt" || field.DBName == "deleted_at" ||
+				reflect.TypeOf(field.FieldType) == reflect.TypeOf(gorm.DeletedAt{})) {
 			softDeleteField = field
 			break
 		}
@@ -81,7 +80,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 		stmt.AddClauseIfNotExists(clause.Update{Table: clause.Table{Name: stmt.Schema.Table}})
 		
 		// 构建 SET 子句，设置 deleted_at 为当前时间
-		now := time.Now()
+		now := db.NowFunc()
 		convertedNow := convertValue(now, field)
 		set := clause.Set{clause.Assignment{Column: clause.Column{Name: field.DBName}, Value: convertedNow}}
 		stmt.AddClause(set)
@@ -106,7 +105,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 					stmt.WriteByte(',')
 				}
 				boundVars[field.Name] = len(stmt.Vars)
-				stmt.AddVar(stmt, go_ora.Out{Dest: reflect.New(field.FieldType).Interface(), Size: outParamSize(field)})
+				stmt.AddVar(stmt, outParam(field))
 			}
 		}
 	}
@@ -149,10 +148,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 		result, err := execConn.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
 		if err != nil {
 			db.AddError(err)
-			// 如果不是在已有事务中，则回滚我们创建的事务
-			if !isTransaction {
-				_ = tx.Rollback()
-			}
+			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
 			return
 		}
 		
@@ -177,7 +173,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 				func(field *gormSchema.Field) {
 					switch updateTo.Kind() {
 					case reflect.Struct:
-						if err = field.Set(stmt.Context, updateTo, stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest); err != nil {
+						if err = field.Set(stmt.Context, updateTo, outDest(stmt.Vars, boundVars[field.Name])); err != nil {
 							db.AddError(err)
 						}
 					case reflect.Map:
@@ -185,7 +181,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 						mapValue := reflect.ValueOf(updateTo.Interface())
 						if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 							keyValue := reflect.ValueOf(field.DBName)
-							destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest)
+							destValue := reflect.ValueOf(outDest(stmt.Vars, boundVars[field.Name]))
 							if destValue.Kind() == reflect.Ptr {
 								destValue = destValue.Elem()
 							}
@@ -239,7 +235,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 					stmt.WriteByte(',')
 				}
 				boundVars[field.Name] = len(stmt.Vars)
-				stmt.AddVar(stmt, go_ora.Out{Dest: reflect.New(field.FieldType).Interface(), Size: outParamSize(field)})
+				stmt.AddVar(stmt, outParam(field))
 			}
 		}
 	}
@@ -282,10 +278,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 		result, err := execConn.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
 		if err != nil {
 			db.AddError(err)
-			// 如果不是在已有事务中，则回滚我们创建的事务
-			if !isTransaction {
-				_ = tx.Rollback()
-			}
+			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
 			return
 		}
 		
@@ -310,7 +303,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 				func(field *gormSchema.Field) {
 					switch deleteTo.Kind() {
 					case reflect.Struct:
-						if err = field.Set(stmt.Context, deleteTo, stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest); err != nil {
+						if err = field.Set(stmt.Context, deleteTo, outDest(stmt.Vars, boundVars[field.Name])); err != nil {
 							db.AddError(err)
 						}
 					case reflect.Map:
@@ -318,7 +311,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 						mapValue := reflect.ValueOf(deleteTo.Interface())
 						if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 							keyValue := reflect.ValueOf(field.DBName)
-							destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest)
+							destValue := reflect.ValueOf(outDest(stmt.Vars, boundVars[field.Name]))
 							if destValue.Kind() == reflect.Ptr {
 								destValue = destValue.Elem()
 							}

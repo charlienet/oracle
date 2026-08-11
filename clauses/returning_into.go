@@ -1,5 +1,9 @@
 package clauses
 
+// 注意：本 clause 当前未被 create.go/update.go/delete.go 使用——
+// 各文件的 RETURNING INTO 逻辑为手工内联构建（因占位符与已有 Vars 冲突）。
+// 保留用于测试与文档用途；若后续需要复用，需解决占位符编号与 Vars 对齐问题。
+
 import (
 	"fmt"
 	"gorm.io/gorm/clause"
