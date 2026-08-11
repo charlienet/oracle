@@ -226,6 +226,12 @@ func TestDataTypeOf(t *testing.T) {
 			want:      "CLOB",
 		},
 		{
+			name:      "json data type maps to CLOB (no native JSON, go-ora transmits as LOB/text)",
+			dialector: d12,
+			mutate:    func(f *schema.Field) { f.DataType = schema.DataType("json") },
+			want:      "CLOB",
+		},
+		{
 			name:      "VARCHAR2 data type with size",
 			dialector: d12,
 			mutate:    func(f *schema.Field) { f.DataType = schema.DataType("VARCHAR2"); f.Size = 50 },

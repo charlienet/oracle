@@ -425,7 +425,12 @@ func (d Dialector) DataTypeOf(field *schema.Field) string {
 	default:
 		sqlType = string(field.DataType)
 
-		if strings.EqualFold(sqlType, "text") {
+		// text/json 统一映射为 CLOB：
+		// Oracle 21c+ 虽有原生 JSON 类型，但 go-ora（纯 Go）对 JSON 列仅按
+		// LOB/文本传输、不做 OSON 解析，且 godror 依赖 ODPI-C/Instant Client；
+		// 统一用 CLOB 存 JSON 文本对 11g~21c 各版本与两个驱动都兼容
+		// （12c~19c 的 JSON 本就是 JSON 函数 + CLOB/VARCHAR2 存储）。
+		if strings.EqualFold(sqlType, "text") || strings.EqualFold(sqlType, "json") {
 			sqlType = "CLOB"
 		}
 
