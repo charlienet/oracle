@@ -13,6 +13,7 @@ import (
 
 	"github.com/charlienet/oracle/clauses"
 	"github.com/charlienet/oracle/utils"
+	go_ora "github.com/sijms/go-ora/v2"
 )
 
 func Create(db *gorm.DB) {
@@ -91,7 +92,7 @@ func Create(db *gorm.DB) {
 						stmt.WriteByte(',')
 					}
 					boundVars[field.Name] = len(stmt.Vars)
-					stmt.AddVar(stmt, sql.Out{Dest: reflect.New(field.FieldType).Interface()})
+					stmt.AddVar(stmt, go_ora.Out{Dest: reflect.New(field.FieldType).Interface(), Size: outParamSize(field)})
 				}
 			}
 		}
@@ -169,7 +170,7 @@ func Create(db *gorm.DB) {
 							func(field *gormSchema.Field) {
 								switch insertTo.Kind() {
 								case reflect.Struct:
-									if err = field.Set(stmt.Context, insertTo, stmt.Vars[boundVars[field.Name]].(sql.Out).Dest); err != nil {
+									if err = field.Set(stmt.Context, insertTo, stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest); err != nil {
 										db.AddError(err)
 									}
 								case reflect.Map:
@@ -177,7 +178,7 @@ func Create(db *gorm.DB) {
 									mapValue := reflect.ValueOf(insertTo.Interface())
 									if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 										keyValue := reflect.ValueOf(field.DBName)
-										destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(sql.Out).Dest)
+										destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest)
 										if destValue.Kind() == reflect.Ptr {
 											destValue = destValue.Elem()
 										}

@@ -14,6 +14,23 @@ import (
 	"gorm.io/gorm/schema"
 )
 
+// outParamSize 计算 RETURNING INTO 输出参数所需的缓冲区大小（字符数/字节数）。
+// go-ora 对变长类型（字符串/RAW 等）输出参数必须指定 Size：
+// 若 Size 为 0，驱动解析服务器返回值时会错位，导致 "more than one row affected
+// with return clause" 或 "driver: bad connection"（见 go-ora issue #329/#703）。
+// 数字/时间等定长类型不需要 Size。
+func outParamSize(field *schema.Field) int {
+	switch field.DataType {
+	case schema.String, schema.Bytes:
+		if field.Size > 0 {
+			return field.Size
+		}
+		return 4000 // Oracle 11g VARCHAR2 上限
+	default:
+		return 0
+	}
+}
+
 // convertValue 将 Go 值转换为 Oracle 兼容格式
 func convertValue(value interface{}, field *schema.Field) interface{} {
 	if value == nil {

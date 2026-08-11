@@ -11,6 +11,7 @@ import (
 	gormSchema "gorm.io/gorm/schema"
 
 	"github.com/charlienet/oracle/utils"
+	go_ora "github.com/sijms/go-ora/v2"
 )
 
 func Delete(db *gorm.DB) {
@@ -101,7 +102,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 					stmt.WriteByte(',')
 				}
 				boundVars[field.Name] = len(stmt.Vars)
-				stmt.AddVar(stmt, sql.Out{Dest: reflect.New(field.FieldType).Interface()})
+				stmt.AddVar(stmt, go_ora.Out{Dest: reflect.New(field.FieldType).Interface(), Size: outParamSize(field)})
 			}
 		}
 	}
@@ -172,7 +173,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 				func(field *gormSchema.Field) {
 					switch updateTo.Kind() {
 					case reflect.Struct:
-						if err = field.Set(stmt.Context, updateTo, stmt.Vars[boundVars[field.Name]].(sql.Out).Dest); err != nil {
+						if err = field.Set(stmt.Context, updateTo, stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest); err != nil {
 							db.AddError(err)
 						}
 					case reflect.Map:
@@ -180,7 +181,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 						mapValue := reflect.ValueOf(updateTo.Interface())
 						if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 							keyValue := reflect.ValueOf(field.DBName)
-							destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(sql.Out).Dest)
+							destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest)
 							if destValue.Kind() == reflect.Ptr {
 								destValue = destValue.Elem()
 							}
@@ -230,7 +231,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int) {
 					stmt.WriteByte(',')
 				}
 				boundVars[field.Name] = len(stmt.Vars)
-				stmt.AddVar(stmt, sql.Out{Dest: reflect.New(field.FieldType).Interface()})
+				stmt.AddVar(stmt, go_ora.Out{Dest: reflect.New(field.FieldType).Interface(), Size: outParamSize(field)})
 			}
 		}
 	}
@@ -301,7 +302,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int) {
 				func(field *gormSchema.Field) {
 					switch deleteTo.Kind() {
 					case reflect.Struct:
-						if err = field.Set(stmt.Context, deleteTo, stmt.Vars[boundVars[field.Name]].(sql.Out).Dest); err != nil {
+						if err = field.Set(stmt.Context, deleteTo, stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest); err != nil {
 							db.AddError(err)
 						}
 					case reflect.Map:
@@ -309,7 +310,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int) {
 						mapValue := reflect.ValueOf(deleteTo.Interface())
 						if mapValue.IsValid() && mapValue.Type().Key().Kind() == reflect.String {
 							keyValue := reflect.ValueOf(field.DBName)
-							destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(sql.Out).Dest)
+							destValue := reflect.ValueOf(stmt.Vars[boundVars[field.Name]].(go_ora.Out).Dest)
 							if destValue.Kind() == reflect.Ptr {
 								destValue = destValue.Elem()
 							}
