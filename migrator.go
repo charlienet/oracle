@@ -3,6 +3,7 @@ package oracle
 import (
 	"database/sql"
 	"fmt"
+	"hash/crc32"
 	"strings"
 
 	"gorm.io/gorm/schema"
@@ -57,8 +58,10 @@ func (m Migrator) CreateTable(values ...any) error {
 			}
 			for _, rel := range stmt.Schema.Relationships.Relations {
 				if err := m.CreateOnUpdateTrigger(value, rel); err != nil {
-					// 触发器创建失败不阻止表创建，只记录警告
-					// 可以选择忽略或记录日志
+					// 触发器创建失败不阻止表创建，但记录警告
+					m.DB.Logger.Warn(m.DB.Statement.Context, 
+						"failed to create ON UPDATE trigger for %s.%s: %v", 
+						stmt.Schema.Table, rel.Field.Name, err)
 				}
 			}
 			return nil
@@ -111,9 +114,10 @@ func (m Migrator) CreateTable(values ...any) error {
 // sequenceName 返回自增主键对应的序列名
 func (m Migrator) sequenceName(table string) string {
 	name := fmt.Sprintf("SEQ_%s", table)
-	// Oracle 标识符最多 30 字符，超长时截断避免 ORA-00972
 	if len(name) > 30 {
-		name = name[:30]
+		// 使用 CRC32 哈希保证唯一性（8 字符）
+		hash := fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(table)))
+		name = name[:21] + "_" + hash  // 21 + 1 + 8 = 30
 	}
 	return name
 }
@@ -121,9 +125,9 @@ func (m Migrator) sequenceName(table string) string {
 // triggerName 返回自增主键对应的触发器名
 func (m Migrator) triggerName(table string) string {
 	name := fmt.Sprintf("TRG_%s", table)
-	// Oracle 标识符最多 30 字符，超长时截断避免 ORA-00972
 	if len(name) > 30 {
-		name = name[:30]
+		hash := fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(table)))
+		name = name[:21] + "_" + hash
 	}
 	return name
 }
@@ -197,9 +201,10 @@ func extractSequenceNameFromDefault(defaultValue string) string {
 // 触发器命名为 SEQDEF_TRG_<table>_<column>，避免与 autoIncrement 的 TRG_<table> 冲突。
 func (m Migrator) createSequenceDefaultTrigger(stmt *gorm.Statement, field *schema.Field, seqName string) error {
 	trgName := fmt.Sprintf("SEQDEF_TRG_%s_%s", stmt.Table, field.DBName)
-	// Oracle 标识符最多 30 字符，超长时截断避免 ORA-00972
 	if len(trgName) > 30 {
-		trgName = trgName[:30]
+		combined := stmt.Table + "_" + field.DBName
+		hash := fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(combined)))
+		trgName = trgName[:21] + "_" + hash
 	}
 
 	triggerSQL := fmt.Sprintf(`CREATE OR REPLACE TRIGGER %s
@@ -253,11 +258,15 @@ func (m Migrator) HasTable(value any) bool {
 
 	m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		if stmt.Schema != nil && strings.Contains(stmt.Schema.Table, ".") {
-			ownertable := strings.Split(stmt.Schema.Table, ".")
-			if len(ownertable) < 2 {
+			parts := strings.SplitN(stmt.Schema.Table, ".", 2)
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 				return fmt.Errorf("invalid table name format: %s", stmt.Schema.Table)
 			}
-			return m.DB.Raw("SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = ?  and  TABLE_NAME = ?", ownertable[0], ownertable[1]).Row().Scan(&count)
+			// 去除可能的引号
+			owner := strings.Trim(parts[0], `"`)
+			table := strings.Trim(parts[1], `"`)
+			return m.DB.Raw("SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = ? AND TABLE_NAME = ?", 
+				strings.ToUpper(owner), strings.ToUpper(table)).Row().Scan(&count)
 		} else {
 			return m.DB.Raw("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = ?", stmt.Table).Row().Scan(&count)
 		}
@@ -408,11 +417,14 @@ func (m Migrator) HasColumn(value any, field string) bool {
 	var count int64
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		if stmt.Schema != nil && strings.Contains(stmt.Schema.Table, ".") {
-			ownertable := strings.Split(stmt.Schema.Table, ".")
-			if len(ownertable) < 2 {
+			parts := strings.SplitN(stmt.Schema.Table, ".", 2)
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 				return fmt.Errorf("invalid table name format: %s", stmt.Schema.Table)
 			}
-			return m.DB.Raw("SELECT COUNT(*) FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", ownertable[0], ownertable[1], field).Row().Scan(&count)
+			owner := strings.Trim(parts[0], `"`)
+			table := strings.Trim(parts[1], `"`)
+			return m.DB.Raw("SELECT COUNT(*) FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", 
+				strings.ToUpper(owner), strings.ToUpper(table), field).Row().Scan(&count)
 		} else {
 			return m.DB.Raw("SELECT COUNT(*) FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", stmt.Table, field).Row().Scan(&count)
 		}
@@ -424,11 +436,14 @@ func (m Migrator) AlterDataTypeOf(stmt *gorm.Statement, field *schema.Field) (ex
 
 	var nullable = ""
 	if stmt.Schema != nil && strings.Contains(stmt.Schema.Table, ".") {
-		ownertable := strings.Split(stmt.Schema.Table, ".")
-		if len(ownertable) < 2 {
+		parts := strings.SplitN(stmt.Schema.Table, ".", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 			// 如果格式无效，跳过查询，保持 nullable 为空
 		} else {
-			m.DB.Raw("SELECT NULLABLE FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", ownertable[0], ownertable[1], field.DBName).Row().Scan(&nullable)
+			owner := strings.Trim(parts[0], `"`)
+			table := strings.Trim(parts[1], `"`)
+			m.DB.Raw("SELECT NULLABLE FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", 
+				strings.ToUpper(owner), strings.ToUpper(table), field.DBName).Row().Scan(&nullable)
 		}
 	} else {
 		m.DB.Raw("SELECT NULLABLE FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", stmt.Table, field.DBName).Row().Scan(&nullable)
@@ -601,7 +616,9 @@ func (m Migrator) TryRemoveOnUpdate(values ...any) error {
 func onUpdateTriggerName(table, fkCol, refCol string) string {
 	name := fmt.Sprintf("fk_trigger_%s_%s_%s", table, fkCol, refCol)
 	if len(name) > 30 {
-		name = name[:30]
+		combined := table + "_" + fkCol + "_" + refCol
+		hash := fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(combined)))
+		name = name[:21] + "_" + hash
 	}
 	return name
 }

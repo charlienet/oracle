@@ -1,10 +1,13 @@
 package clauses
 
 import (
-	"strings"
+	"regexp"
 
 	"gorm.io/gorm/clause"
 )
+
+// excludedAliasRegex 匹配完整的 excluded. 标识符，避免误伤包含 excluded 的列名
+var excludedAliasRegex = regexp.MustCompile(`(?i)\bexcluded\.`)
 
 type WhenMatched struct {
 	clause.Set
@@ -39,8 +42,9 @@ func (w WhenMatched) Build(builder clause.Builder) {
 				}
 			case clause.Expr:
 				// 处理 gorm.Expr() 和 clause.Expr{} 中的 excluded 引用
-				if strings.Contains(v.SQL, "excluded.") {
-					v.SQL = strings.ReplaceAll(v.SQL, "excluded.", MergeDefaultExcludeName()+".")
+				// 使用正则表达式匹配完整的标识符，避免误伤
+				if excludedAliasRegex.MatchString(v.SQL) {
+					v.SQL = excludedAliasRegex.ReplaceAllString(v.SQL, MergeDefaultExcludeName()+".")
 					w.Set[i].Value = v
 				}
 			}

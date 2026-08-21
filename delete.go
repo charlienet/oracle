@@ -138,14 +138,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 			return
 		}
 
-		var execConn *sql.Tx
-		if isTransaction {
-			execConn = tx // 已经在事务中，直接使用原事务
-		} else {
-			execConn = tx // 使用新创建的事务
-		}
-
-		result, err := execConn.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
+		result, err := tx.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
 		if err != nil {
 			db.AddError(err)
 			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
@@ -268,14 +261,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 			return
 		}
 
-		var execConn *sql.Tx
-		if isTransaction {
-			execConn = tx // 已经在事务中，直接使用原事务
-		} else {
-			execConn = tx // 使用新创建的事务
-		}
-
-		result, err := execConn.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
+		result, err := tx.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
 		if err != nil {
 			db.AddError(err)
 			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback

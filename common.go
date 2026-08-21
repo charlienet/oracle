@@ -212,6 +212,11 @@ func addPrimaryKeyWhere(stmt *gorm.Statement, sch *schema.Schema) int {
 	return len(values)
 }
 
+// escapeOracleString 转义 Oracle 字符串中的单引号
+func escapeOracleString(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
 // buildOracleDefault 智能转换默认值
 // dbVer 用于版本感知的默认值处理：Oracle 11g 的 DEFAULT 子句不允许引用序列的
 // NEXTVAL（ORA-00984，12c 才引入该能力），因此 11g 下 NEXTVAL 分支返回空字符串，
@@ -253,15 +258,15 @@ func buildOracleDefault(dbVer string, defaultValue string, field *schema.Field) 
 
 		// 检查日期格式 "2006-01-02"
 		if dateRegex.MatchString(defaultValue) {
-			return fmt.Sprintf("DEFAULT TO_DATE('%s', 'YYYY-MM-DD')", defaultValue)
+			return fmt.Sprintf("DEFAULT TO_DATE('%s', 'YYYY-MM-DD')", escapeOracleString(defaultValue))
 		}
 
 		// 检查时间戳格式 "2006-01-02 15:04:05"
 		if timestampRegex.MatchString(defaultValue) {
-			return fmt.Sprintf("DEFAULT TO_DATE('%s', 'YYYY-MM-DD HH24:MI:SS')", defaultValue)
+			return fmt.Sprintf("DEFAULT TO_DATE('%s', 'YYYY-MM-DD HH24:MI:SS')", escapeOracleString(defaultValue))
 		}
 
 		// 普通字符串用单引号包围
-		return fmt.Sprintf("DEFAULT '%s'", defaultValue)
+		return fmt.Sprintf("DEFAULT '%s'", escapeOracleString(defaultValue))
 	}
 }
