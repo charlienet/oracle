@@ -127,19 +127,25 @@ func postprocessQuery(db *gorm.DB) {
 		}
 	}
 
+	// 预构建按 Go 字段名的映射，避免每条记录都重建
+	nameToField := make(map[string]*schema.Field, len(stmt.Schema.Fields))
+	for _, f := range stmt.Schema.Fields {
+		nameToField[f.Name] = f
+	}
+
 	// 处理单条记录或列表
 	switch rv.Kind() {
 	case reflect.Slice:
 		for i := 0; i < rv.Len(); i++ {
-			processRecord(rv.Index(i), stmt.Schema, columnToField)
+			processRecord(rv.Index(i), stmt.Schema, columnToField, nameToField)
 		}
 	case reflect.Struct:
-		processRecord(rv, stmt.Schema, columnToField)
+		processRecord(rv, stmt.Schema, columnToField, nameToField)
 	}
 }
 
 // processRecord 处理单条记录的字段值转换
-func processRecord(rv reflect.Value, schemaInfo *schema.Schema, columnToField map[string]*schema.Field) {
+func processRecord(rv reflect.Value, schemaInfo *schema.Schema, columnToField map[string]*schema.Field, nameToField map[string]*schema.Field) {
 	if !rv.IsValid() {
 		return
 	}
@@ -167,12 +173,6 @@ func processRecord(rv reflect.Value, schemaInfo *schema.Schema, columnToField ma
 		return
 	}
 
-	// 预构建按 Go 字段名的映射
-	nameToField := make(map[string]*schema.Field, len(schemaInfo.Fields))
-	for _, f := range schemaInfo.Fields {
-		nameToField[f.Name] = f
-	}
-
 	// 遍历结构体字段进行处理
 	for i := 0; i < rv.NumField(); i++ {
 		fieldStruct := rv.Type().Field(i)
@@ -190,7 +190,7 @@ func processRecord(rv reflect.Value, schemaInfo *schema.Schema, columnToField ma
 
 		// 转换字段值
 		convertedValue := convertFromOracleToField(fieldValue.Interface(), schemaField)
-		if convertedValue != nil && !isZeroValue(convertedValue) {
+		if convertedValue != nil {
 			setFieldValue(fieldValue, convertedValue)
 		}
 	}
@@ -214,6 +214,13 @@ func findSchemaFieldByStructFieldFast(schemaInfo *schema.Schema, structField *re
 	// 尝试使用结构体字段名作为列名查找
 	if schemaField, exists := columnToField[strings.ToUpper(structField.Name)]; exists {
 		return schemaField
+	}
+	
+	// 如果以上方法都失败，遍历 schema 字段查找匹配项
+	for _, field := range schemaInfo.Fields {
+		if field.Name == structField.Name || field.DBName == dbName {
+			return field
+		}
 	}
 	
 	return nil

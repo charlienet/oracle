@@ -373,20 +373,7 @@ func (m Migrator) ColumnTypes(value any) ([]gorm.ColumnType, error) {
 				ct.NameValue = sql.NullString{String: dbName, Valid: true}
 			}
 
-			// go-ora 未实现 RowsColumnTypeDatabaseTypeName，从数据字典获取真实数据类型，
-			// 避免 AutoMigrate 对每个非主键列都误判类型变化并触发 ALTER。
-			// 在循环前一次性查询所有列的类型
-			if len(dataTypes) == 0 {
-				if rows, err := m.DB.Raw("SELECT COLUMN_NAME, DATA_TYPE FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ?", stmt.Table).Rows(); err == nil {
-					defer rows.Close()
-					for rows.Next() {
-						var colName, dt string
-						if err := rows.Scan(&colName, &dt); err == nil {
-							dataTypes[strings.ToUpper(colName)] = dt
-						}
-					}
-				}
-			}
+
 			
 			if dt, ok := dataTypes[upperName]; ok && dt != "" {
 				ct.DataTypeValue = sql.NullString{String: dt, Valid: true}

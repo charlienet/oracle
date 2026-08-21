@@ -161,7 +161,14 @@ func isSoftDeleteCondition(condition clause.Expression, sch *schema.Schema) bool
 	// 查找是否有 deleted_at 字段
 	var softDeleteField *schema.Field
 	for _, field := range sch.Fields {
-		if strings.EqualFold(field.DBName, "deleted_at") || field.Name == "DeletedAt" {
+		// 优先检查类型（最精确）
+		if reflect.TypeOf(field.FieldType) == reflect.TypeOf(gorm.DeletedAt{}) {
+			softDeleteField = field
+			break
+		}
+		// 兼容旧逻辑：按字段名判定，但要求类型必须是 time 相关
+		if (field.Name == "DeletedAt" || strings.EqualFold(field.DBName, "deleted_at")) &&
+		   (field.DataType == schema.Time || field.GORMDataType == schema.Time) {
 			softDeleteField = field
 			break
 		}

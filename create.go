@@ -49,18 +49,18 @@ func Create(db *gorm.DB) {
 			stmt.AddClauseIfNotExists(clauses.Merge{
 				Using: []clause.Interface{
 					clause.Select{
-						Columns: utils.MapClauseColumn(values.Columns, func(column clause.Column) clause.Column {
-							// HACK: I can not come up with a better alternative for now
-							// I want to add a value to the list of variable and then capture the bind variable position as well
-							buf := bytes.NewBufferString("")
-							stmt.Vars = append(stmt.Vars, values.Values[0][utils.IndexOf(values.Columns, column)])
-							stmt.BindVarTo(buf, stmt, nil)
-
-							column.Alias = column.Name
-							// then the captured bind var will be the name
-							column.Name = buf.String()
-							return column
-						}), //utils.MapClauseColumn(values.Columns, func(column clause.Column) clause.Column {
+						Columns: func() []clause.Column {
+							result := make([]clause.Column, len(values.Columns))
+							for i, column := range values.Columns {
+								buf := bytes.NewBufferString("")
+								stmt.Vars = append(stmt.Vars, values.Values[0][i])
+								stmt.BindVarTo(buf, stmt, nil)
+								column.Alias = column.Name
+								column.Name = buf.String()
+								result[i] = column
+							}
+							return result
+						}(),
 					},
 					clause.From{
 						Tables: []clause.Table{{Name: db.Dialector.(*Dialector).DummyTableName()}},
