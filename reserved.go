@@ -1,13 +1,18 @@
 package oracle
 
-import (
-	"github.com/emirpasic/gods/sets/hashset"
-)
+// 使用 map[string]struct{} 替代第三方 gods 依赖
+var reservedWordsMap map[string]struct{}
 
-var ReservedWords = hashset.New(MapStringToInterface(ReservedWordsList)...)
+func init() {
+	reservedWordsMap = make(map[string]struct{}, len(ReservedWordsList))
+	for _, word := range ReservedWordsList {
+		reservedWordsMap[word] = struct{}{}
+	}
+}
 
 func IsReservedWord(v string) bool {
-	return ReservedWords.Contains(v)
+	_, exists := reservedWordsMap[v]
+	return exists
 }
 
 var ReservedWordsList = []string{
@@ -23,13 +28,4 @@ var ReservedWordsList = []string{
 	"PARALLEL", "PARENT", "PARTITION", "PCTFREE", "PLSQL", "PRIOR", "PRIVILEGES", "PRUNE", "PUBLIC", "RAW", "RELATIVE", "RENAME", "RESOURCE", "REVOKE", "ROOT_ANCESTOR", "ROW", "ROWID", "ROWNUM", "ROWS", "SCN", "SECOND", "SELECT", "SELF",
 	"SERIAL", "SESSION", "SET", "SHARE", "SIZE", "SOLVE", "SOME", "SORT", "SPEC", "START", "SUCCESSFUL", "SUM", "SYNCH", "SYNONYM", "SYSDATE", "SYSTIMESTAMP", "TABLE", "TEXT_MEASURE", "THEN", "TIME", "TIMESTAMP", "TITLE", "TO", "TRIGGER", "TYPE", "UID", "UNBRANCH", "UNION", "UNIQUE", "UNLIMITED", "UPDATE", "USER", "USING", "VALIDATE", "VALUES", "VARCHAR2", "VIEW", "WHEN", "WHERE", "WITHIN", "WITH", "YEAR",
 	"ZERO", "ZONE",
-}
-
-// 辅助函数：将字符串切片转换为接口切片
-func MapStringToInterface(slice []string) []any {
-	result := make([]any, len(slice))
-	for i, v := range slice {
-		result[i] = v
-	}
-	return result
 }

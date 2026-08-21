@@ -152,7 +152,7 @@ func (m Migrator) createAutoIncrementSupport(value any) error {
 			trgName := m.triggerName(stmt.Table)
 
 			// 创建序列
-			if err := m.DB.Exec(fmt.Sprintf("CREATE SEQUENCE %s START WITH 1 INCREMENT BY 1 NOCACHE", seqName)).Error; err != nil {
+			if err := m.DB.Exec(fmt.Sprintf("CREATE SEQUENCE %s START WITH 1 INCREMENT BY 1 CACHE 20", seqName)).Error; err != nil {
 				return err
 			}
 
@@ -254,6 +254,9 @@ func (m Migrator) HasTable(value any) bool {
 	m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		if stmt.Schema != nil && strings.Contains(stmt.Schema.Table, ".") {
 			ownertable := strings.Split(stmt.Schema.Table, ".")
+			if len(ownertable) < 2 {
+				return fmt.Errorf("invalid table name format: %s", stmt.Schema.Table)
+			}
 			return m.DB.Raw("SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = ?  and  TABLE_NAME = ?", ownertable[0], ownertable[1]).Row().Scan(&count)
 		} else {
 			return m.DB.Raw("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = ?", stmt.Table).Row().Scan(&count)
@@ -406,6 +409,9 @@ func (m Migrator) HasColumn(value any, field string) bool {
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		if stmt.Schema != nil && strings.Contains(stmt.Schema.Table, ".") {
 			ownertable := strings.Split(stmt.Schema.Table, ".")
+			if len(ownertable) < 2 {
+				return fmt.Errorf("invalid table name format: %s", stmt.Schema.Table)
+			}
 			return m.DB.Raw("SELECT COUNT(*) FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", ownertable[0], ownertable[1], field).Row().Scan(&count)
 		} else {
 			return m.DB.Raw("SELECT COUNT(*) FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", stmt.Table, field).Row().Scan(&count)
@@ -419,7 +425,11 @@ func (m Migrator) AlterDataTypeOf(stmt *gorm.Statement, field *schema.Field) (ex
 	var nullable = ""
 	if stmt.Schema != nil && strings.Contains(stmt.Schema.Table, ".") {
 		ownertable := strings.Split(stmt.Schema.Table, ".")
-		m.DB.Raw("SELECT NULLABLE FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", ownertable[0], ownertable[1], field.DBName).Row().Scan(&nullable)
+		if len(ownertable) < 2 {
+			// 如果格式无效，跳过查询，保持 nullable 为空
+		} else {
+			m.DB.Raw("SELECT NULLABLE FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", ownertable[0], ownertable[1], field.DBName).Row().Scan(&nullable)
+		}
 	} else {
 		m.DB.Raw("SELECT NULLABLE FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", stmt.Table, field.DBName).Row().Scan(&nullable)
 	}
@@ -674,10 +684,14 @@ func (m Migrator) DropOnUpdateTrigger(value any, rel *schema.Relationship) error
 	}
 
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		constraint := rel.ParseConstraint()
+		if constraint == nil {
+			return fmt.Errorf("constraint is nil")
+		}
 		triggerName := onUpdateTriggerName(
 			stmt.Schema.Table,
 			rel.Field.DBName,
-			rel.Field.DBName,
+			constraint.References[0].DBName,
 		)
 
 		// Oracle 不支持 DROP TRIGGER IF EXISTS（MySQL/PostgreSQL 语法）。

@@ -126,3 +126,21 @@ func TestWhenMatchedBuildWithExcludedAlias(t *testing.T) {
 		t.Errorf("WhenMatched SQL should contain 'exclude.age', got %q", sql)
 	}
 }
+
+func TestWhenMatchedBuildWithExcludedExpr(t *testing.T) {
+	w := WhenMatched{
+		Set: clause.Set{
+			{Column: clause.Column{Name: "count"}, Value: clause.Expr{SQL: "excluded.count + 1"}},
+		},
+	}
+
+	sql := buildSQL(t, w)
+	
+	// 验证 excluded 被替换为 exclude
+	if strings.Contains(sql, "excluded.") {
+		t.Errorf("WhenMatched SQL should not contain 'excluded.' alias, got %q", sql)
+	}
+	if !strings.Contains(sql, "exclude.count") {
+		t.Errorf("WhenMatched SQL should contain 'exclude.count', got %q", sql)
+	}
+}

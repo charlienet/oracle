@@ -279,13 +279,17 @@ func (d Dialector) getOrderByColumns(stmt *gorm.Statement) string {
 				if i > 0 {
 					orderByBuilder.WriteString(", ")
 				}
-				orderByBuilder.WriteString(column.Column.Name)
+				orderByBuilder.WriteString(`"` + column.Column.Name + `"`)
 				if column.Desc {
 					orderByBuilder.WriteString(" DESC")
 				}
 			}
 			return orderByBuilder.String()
 		}
+	}
+	// 没有 ORDER BY 时使用主键列作为默认排序，避免分页结果不稳定
+	if stmt.Schema != nil && stmt.Schema.PrioritizedPrimaryField != nil {
+		return `"` + stmt.Schema.PrioritizedPrimaryField.DBName + `"`
 	}
 	return "NULL"
 }
@@ -335,6 +339,7 @@ func (d Dialector) QuoteTo(writer clause.Writer, str string) {
 }
 
 var numericPlaceholder = regexp.MustCompile(`:(\d+)`)
+var savepointNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 func (d Dialector) Explain(sql string, vars ...any) string {
 	return logger.ExplainSQL(sql, numericPlaceholder, `'`, oracleUtils.MapInterface(vars, func(v any) any {
@@ -443,11 +448,17 @@ func (d Dialector) DataTypeOf(field *schema.Field) string {
 }
 
 func (d Dialector) SavePoint(tx *gorm.DB, name string) error {
+	if !savepointNameRegex.MatchString(name) {
+		return fmt.Errorf("invalid savepoint name: %s", name)
+	}
 	tx.Exec("SAVEPOINT " + name)
 	return tx.Error
 }
 
 func (d Dialector) RollbackTo(tx *gorm.DB, name string) error {
+	if !savepointNameRegex.MatchString(name) {
+		return fmt.Errorf("invalid savepoint name: %s", name)
+	}
 	tx.Exec("ROLLBACK TO SAVEPOINT " + name)
 	return tx.Error
 }

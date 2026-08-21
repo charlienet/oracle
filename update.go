@@ -151,14 +151,7 @@ func Update(db *gorm.DB) {
 		}
 
 		// 执行更新操作
-		var execConn *sql.Tx
-		if isTransaction {
-			execConn = tx // 已经在事务中，直接使用原事务
-		} else {
-			execConn = tx // 使用新创建的事务
-		}
-
-		result, err := execConn.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
+		result, err := tx.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
 		if err != nil {
 			db.AddError(err)
 			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback

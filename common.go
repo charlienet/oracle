@@ -16,6 +16,11 @@ import (
 	go_ora "github.com/sijms/go-ora/v2"
 )
 
+var (
+	dateRegex      = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	timestampRegex = regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`)
+)
+
 // outParamSize 计算 RETURNING INTO 输出参数所需的缓冲区大小（字符数/字节数）。
 // go-ora 对变长类型（字符串/RAW 等）输出参数必须指定 Size：
 // 若 Size 为 0，驱动解析服务器返回值时会错位，导致 "more than one row affected
@@ -59,11 +64,6 @@ func convertValue(value any, field *schema.Field) any {
 		}
 		return 0
 	case string:
-		// 检查是否超长字符串，如果需要CLOB处理则保持原样
-		if len(v) > 4000 {
-			// 标记需要CLOB处理，这里只是示例，实际可能需要额外逻辑
-			return v
-		}
 		return v
 	case driver.Valuer:
 		// 调用 Value() 方法解包
@@ -252,13 +252,11 @@ func buildOracleDefault(dbVer string, defaultValue string, field *schema.Field) 
 		}
 
 		// 检查日期格式 "2006-01-02"
-		dateRegex := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 		if dateRegex.MatchString(defaultValue) {
 			return fmt.Sprintf("DEFAULT TO_DATE('%s', 'YYYY-MM-DD')", defaultValue)
 		}
 
 		// 检查时间戳格式 "2006-01-02 15:04:05"
-		timestampRegex := regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`)
 		if timestampRegex.MatchString(defaultValue) {
 			return fmt.Sprintf("DEFAULT TO_DATE('%s', 'YYYY-MM-DD HH24:MI:SS')", defaultValue)
 		}

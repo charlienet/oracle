@@ -72,7 +72,22 @@ func Create(db *gorm.DB) {
 			// DoNothing（或空 DoUpdates）时跳过 WHEN MATCHED 子句，
 			// 避免 gorm 的空 Set 兜底输出 PRIMARYKEY=PRIMARYKEY 导致语法错误
 			if len(onConflict.DoUpdates) > 0 {
-				stmt.AddClauseIfNotExists(clauses.WhenMatched{Set: onConflict.DoUpdates})
+				// Oracle ORA-38104: UPDATE SET 不能更新 ON 子句引用的列（主键）
+				pkNames := make(map[string]struct{}, len(schema.PrimaryFields))
+				for _, f := range schema.PrimaryFields {
+					pkNames[f.DBName] = struct{}{}
+				}
+				
+				filteredSet := make(clause.Set, 0, len(onConflict.DoUpdates))
+				for _, a := range onConflict.DoUpdates {
+					if _, isPK := pkNames[a.Column.Name]; !isPK {
+						filteredSet = append(filteredSet, a)
+					}
+				}
+				
+				if len(filteredSet) > 0 {
+					stmt.AddClauseIfNotExists(clauses.WhenMatched{Set: filteredSet})
+				}
 			}
 			stmt.AddClauseIfNotExists(clauses.WhenNotMatched{Values: values})
 
@@ -148,14 +163,7 @@ func Create(db *gorm.DB) {
 				// and then we insert each row one by one then put the returning values back (i.e. last return id => smart insert)
 				// we keep track of the index so that the sub-reflected value is also correct
 
-				var execConn *sql.Tx
-				if isTransaction {
-					execConn = tx // 已经在事务中，直接使用原事务
-				} else {
-					execConn = tx // 使用新创建的事务
-				}
-
-				switch result, err := execConn.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...); err {
+				switch result, err := tx.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...); err {
 				case nil: // success
 					// 批量插入时累加每个单行插入的受影响行数
 					rowsAffected, _ := result.RowsAffected()

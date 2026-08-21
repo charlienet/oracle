@@ -1,6 +1,8 @@
 package clauses
 
 import (
+	"strings"
+
 	"gorm.io/gorm/clause"
 )
 
@@ -29,9 +31,18 @@ func (w WhenMatched) Build(builder clause.Builder) {
 		
 		// 修复：将 GORM 原生的 "excluded" 别名替换为 Oracle 的 "exclude"
 		for i := range w.Set {
-			if col, ok := w.Set[i].Value.(clause.Column); ok && col.Table == "excluded" {
-				col.Table = MergeDefaultExcludeName()
-				w.Set[i].Value = col
+			switch v := w.Set[i].Value.(type) {
+			case clause.Column:
+				if v.Table == "excluded" {
+					v.Table = MergeDefaultExcludeName()
+					w.Set[i].Value = v
+				}
+			case clause.Expr:
+				// 处理 gorm.Expr() 和 clause.Expr{} 中的 excluded 引用
+				if strings.Contains(v.SQL, "excluded.") {
+					v.SQL = strings.ReplaceAll(v.SQL, "excluded.", MergeDefaultExcludeName()+".")
+					w.Set[i].Value = v
+				}
 			}
 		}
 		
