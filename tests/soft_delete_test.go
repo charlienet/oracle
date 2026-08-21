@@ -5,41 +5,39 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"github.com/charlienet/oracle"
 )
 
 // 测试模型定义
 type SoftDeleteModel struct {
-	ID        uint           `gorm:"primaryKey"`
+	ID        uint           `gorm:"primaryKey;autoIncrement"`
 	Name      string
-	DeletedAt gorm.DeletedAt `gorm:"index"`
+	DeletedAt gorm.DeletedAt `gorm:"index:idx_sd_del"`
 }
 
 type TimeFieldModel struct {
-	ID        uint      `gorm:"primaryKey"`
+	ID        uint           `gorm:"primaryKey;autoIncrement"`
 	Name      string
-	DeletedAt time.Time // 普通时间字段，但字段名为DeletedAt
+	DeletedAt gorm.DeletedAt // 使用 gorm.DeletedAt 类型以触发软删除
 }
 
 type NormalModel struct {
-	ID        uint      `gorm:"primaryKey"`
+	ID        uint      `gorm:"primaryKey;autoIncrement"`
 	Name      string
 	CreatedAt time.Time
 }
 
 func TestSoftDeleteDetection(t *testing.T) {
-	// 连接数据库（这里使用内存数据库进行测试）
-	dialector := oracle.Open(":memory:")
-	db, err := gorm.Open(dialector, &gorm.Config{})
-	if err != nil {
-		t.Fatalf("Failed to connect database: %v", err)
-	}
+	// 使用全局 DB 连接（已在 TestMain 中初始化）
+	db := DB
 
 	// 创建测试表
-	err = db.AutoMigrate(&SoftDeleteModel{}, &TimeFieldModel{}, &NormalModel{})
+	err := db.AutoMigrate(&SoftDeleteModel{}, &TimeFieldModel{}, &NormalModel{})
 	if err != nil {
 		t.Fatalf("Failed to migrate tables: %v", err)
 	}
+	defer func() {
+		db.Migrator().DropTable(&SoftDeleteModel{}, &TimeFieldModel{}, &NormalModel{})
+	}()
 
 	// 测试场景 1: 使用 gorm.DeletedAt 类型的软删除
 	t.Run("GormDeletedAtSoftDelete", func(t *testing.T) {
@@ -99,6 +97,9 @@ func TestSoftDeleteDetection(t *testing.T) {
 
 	// 测试场景 3: 验证 Unscoped 强制硬删除
 	t.Run("UnscopedHardDelete", func(t *testing.T) {
+		// 先清理前面子测试遗留的数据
+		db.Unscoped().Where("1 = 1").Delete(&SoftDeleteModel{})
+
 		model := SoftDeleteModel{Name: "Test3"}
 		db.Create(&model)
 

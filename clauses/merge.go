@@ -35,7 +35,7 @@ func (merge Merge) Build(builder clause.Builder) {
 	builder.WriteString(" ON (")
 	for idx, on := range merge.On {
 		if idx > 0 {
-			builder.WriteString(", ")
+			builder.WriteString(" AND ")
 		}
 		on.Build(builder)
 	}

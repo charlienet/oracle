@@ -283,13 +283,7 @@ func (d Dialector) getOrderByColumns(stmt *gorm.Statement) string {
 				if i > 0 {
 					orderByBuilder.WriteString(", ")
 				}
-				if d.SkipQuoteIdentifiers {
-					orderByBuilder.WriteString(column.Column.Name)
-				} else {
-					// 转义列名中的双引号
-					escapedName := strings.ReplaceAll(column.Column.Name, `"`, `""`)
-					orderByBuilder.WriteString(`"` + escapedName + `"`)
-				}
+				orderByBuilder.WriteString(column.Column.Name)
 				if column.Desc {
 					orderByBuilder.WriteString(" DESC")
 				}
@@ -299,13 +293,7 @@ func (d Dialector) getOrderByColumns(stmt *gorm.Statement) string {
 	}
 	// 没有 ORDER BY 时使用主键列作为默认排序，避免分页结果不稳定
 	if stmt.Schema != nil && stmt.Schema.PrioritizedPrimaryField != nil {
-		if d.SkipQuoteIdentifiers {
-			return stmt.Schema.PrioritizedPrimaryField.DBName
-		} else {
-			// 转义主键列名中的双引号
-			escapedName := strings.ReplaceAll(stmt.Schema.PrioritizedPrimaryField.DBName, `"`, `""`)
-			return `"` + escapedName + `"`
-		}
+		return stmt.Schema.PrioritizedPrimaryField.DBName
 	}
 	return "NULL"
 }
