@@ -132,8 +132,8 @@ func Update(db *gorm.DB) {
 		if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
 			tx = sqlTx
 			isTransaction = true
-		} else if sqlDb, ok := stmt.ConnPool.(*sql.DB); ok {
-			tx, err = sqlDb.Begin()
+		} else if starter, ok := stmt.ConnPool.(txBeginner); ok {
+			tx, err = starter.Begin()
 			if err != nil {
 				db.AddError(err)
 				return
@@ -142,11 +142,13 @@ func Update(db *gorm.DB) {
 				if db.Error != nil && !isTransaction {
 					_ = tx.Rollback()
 				} else if !isTransaction {
-					_ = tx.Commit()
+					if err := tx.Commit(); err != nil {
+						db.AddError(err)
+					}
 				}
 			}()
 		} else {
-			db.AddError(fmt.Errorf("unsupported connection pool type"))
+			db.AddError(fmt.Errorf("unsupported connection pool type: %T", stmt.ConnPool))
 			return
 		}
 

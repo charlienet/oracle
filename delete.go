@@ -39,12 +39,17 @@ func Delete(db *gorm.DB) {
 		return
 	}
 
-	// 2. 检查软删除（识别 gorm.DeletedAt 类型字段，不局限于 DeletedAt 字段名）
+	// 2. 检查软删除（优先检查类型，再按字段名判定）
 	var softDeleteField *gormSchema.Field
 	for _, field := range schema.Fields {
-		if field.GORMDataType == "time" &&
-			(field.Name == "DeletedAt" || field.DBName == "deleted_at" ||
-				reflect.TypeOf(field.FieldType) == reflect.TypeFor[gorm.DeletedAt]()) {
+		// 优先检查类型，这是最精确的判定
+		if reflect.TypeOf(field.FieldType) == reflect.TypeFor[gorm.DeletedAt]() {
+			softDeleteField = field
+			break
+		}
+		// 兼容旧逻辑：按字段名判定（但要求类型必须是 time 相关）
+		if (field.Name == "DeletedAt" || field.DBName == "deleted_at") && 
+		   (field.DataType == gormSchema.Time || field.GORMDataType == gormSchema.Time) {
 			softDeleteField = field
 			break
 		}
@@ -120,8 +125,8 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 		if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
 			tx = sqlTx
 			isTransaction = true
-		} else if sqlDb, ok := stmt.ConnPool.(*sql.DB); ok {
-			tx, err = sqlDb.Begin()
+		} else if starter, ok := stmt.ConnPool.(txBeginner); ok {
+			tx, err = starter.Begin()
 			if err != nil {
 				db.AddError(err)
 				return
@@ -130,11 +135,13 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 				if db.Error != nil && !isTransaction {
 					_ = tx.Rollback()
 				} else if !isTransaction {
-					_ = tx.Commit()
+					if err := tx.Commit(); err != nil {
+						db.AddError(err)
+					}
 				}
 			}()
 		} else {
-			db.AddError(fmt.Errorf("unsupported connection pool type"))
+			db.AddError(fmt.Errorf("unsupported connection pool type: %T", stmt.ConnPool))
 			return
 		}
 
@@ -243,8 +250,8 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 		if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
 			tx = sqlTx
 			isTransaction = true
-		} else if sqlDb, ok := stmt.ConnPool.(*sql.DB); ok {
-			tx, err = sqlDb.Begin()
+		} else if starter, ok := stmt.ConnPool.(txBeginner); ok {
+			tx, err = starter.Begin()
 			if err != nil {
 				db.AddError(err)
 				return
@@ -253,11 +260,13 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 				if db.Error != nil && !isTransaction {
 					_ = tx.Rollback()
 				} else if !isTransaction {
-					_ = tx.Commit()
+					if err := tx.Commit(); err != nil {
+						db.AddError(err)
+					}
 				}
 			}()
 		} else {
-			db.AddError(fmt.Errorf("unsupported connection pool type"))
+			db.AddError(fmt.Errorf("unsupported connection pool type: %T", stmt.ConnPool))
 			return
 		}
 

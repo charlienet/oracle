@@ -132,6 +132,32 @@ func (m Migrator) triggerName(table string) string {
 	return name
 }
 
+// validateOracleIdentifier 验证 Oracle 标识符是否合法
+func validateOracleIdentifier(name string) error {
+	if name == "" {
+		return fmt.Errorf("identifier cannot be empty")
+	}
+	if len(name) > 30 {
+		return fmt.Errorf("identifier %q exceeds 30 characters", name)
+	}
+	
+	// 只允许字母、数字、下划线、$、#
+	for i, r := range name {
+		if i == 0 {
+			// 第一个字符只能是字母或下划线
+			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_') {
+				return fmt.Errorf("identifier %q contains invalid characters", name)
+			}
+		} else {
+			// 其他字符可以是字母、数字、下划线、$、#
+			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '$' || r == '#') {
+				return fmt.Errorf("identifier %q contains invalid characters", name)
+			}
+		}
+	}
+	return nil
+}
+
 // createAutoIncrementSupport 为自增主键创建序列和 BEFORE INSERT 触发器（仅不支持 IDENTITY 的版本）
 func (m Migrator) createAutoIncrementSupport(value any) error {
 	// 12c+ 原生支持 IDENTITY 列，无需序列 + 触发器模拟
@@ -152,11 +178,25 @@ func (m Migrator) createAutoIncrementSupport(value any) error {
 				continue
 			}
 
+			// 验证标识符安全性
+			if err := validateOracleIdentifier(field.DBName); err != nil {
+				return err
+			}
+			if err := validateOracleIdentifier(stmt.Table); err != nil {
+				return err
+			}
+
 			seqName := m.sequenceName(stmt.Table)
 			trgName := m.triggerName(stmt.Table)
 
 			// 创建序列
-			if err := m.DB.Exec(fmt.Sprintf("CREATE SEQUENCE %s START WITH 1 INCREMENT BY 1 CACHE 20", seqName)).Error; err != nil {
+			seqSQL := fmt.Sprintf(`BEGIN
+    EXECUTE IMMEDIATE 'CREATE SEQUENCE %s START WITH 1 INCREMENT BY 1 CACHE 20';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF SQLCODE != -955 THEN RAISE; END IF;
+END;`, seqName)
+			if err := m.DB.Exec(seqSQL).Error; err != nil {
 				return err
 			}
 
@@ -200,6 +240,14 @@ func extractSequenceNameFromDefault(defaultValue string) string {
 // 因此在建表后通过触发器实现等价语义：插入时列值为 NULL 则从序列取值回填。
 // 触发器命名为 SEQDEF_TRG_<table>_<column>，避免与 autoIncrement 的 TRG_<table> 冲突。
 func (m Migrator) createSequenceDefaultTrigger(stmt *gorm.Statement, field *schema.Field, seqName string) error {
+	// 验证标识符安全性
+	if err := validateOracleIdentifier(field.DBName); err != nil {
+		return err
+	}
+	if err := validateOracleIdentifier(stmt.Table); err != nil {
+		return err
+	}
+
 	trgName := fmt.Sprintf("SEQDEF_TRG_%s_%s", stmt.Table, field.DBName)
 	if len(trgName) > 30 {
 		combined := stmt.Table + "_" + field.DBName
@@ -304,6 +352,18 @@ func (m Migrator) ColumnTypes(value any) ([]gorm.ColumnType, error) {
 			}
 		}
 
+		// 在循环前一次性查询所有列的类型
+		dataTypes := make(map[string]string)
+		if rows, err := m.DB.Raw("SELECT COLUMN_NAME, DATA_TYPE FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ?", stmt.Table).Rows(); err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var colName, dt string
+				if err := rows.Scan(&colName, &dt); err == nil {
+					dataTypes[strings.ToUpper(colName)] = dt
+				}
+			}
+		}
+
 		for _, c := range rawColumnTypes {
 			ct := migrator.ColumnType{SQLColumnType: c}
 
@@ -315,12 +375,21 @@ func (m Migrator) ColumnTypes(value any) ([]gorm.ColumnType, error) {
 
 			// go-ora 未实现 RowsColumnTypeDatabaseTypeName，从数据字典获取真实数据类型，
 			// 避免 AutoMigrate 对每个非主键列都误判类型变化并触发 ALTER。
-			var dataType string
-			if err := m.DB.Raw(
-				"SELECT DATA_TYPE FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND UPPER(COLUMN_NAME) = ?",
-				stmt.Table, upperName,
-			).Row().Scan(&dataType); err == nil && dataType != "" {
-				ct.DataTypeValue = sql.NullString{String: dataType, Valid: true}
+			// 在循环前一次性查询所有列的类型
+			if len(dataTypes) == 0 {
+				if rows, err := m.DB.Raw("SELECT COLUMN_NAME, DATA_TYPE FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ?", stmt.Table).Rows(); err == nil {
+					defer rows.Close()
+					for rows.Next() {
+						var colName, dt string
+						if err := rows.Scan(&colName, &dt); err == nil {
+							dataTypes[strings.ToUpper(colName)] = dt
+						}
+					}
+				}
+			}
+			
+			if dt, ok := dataTypes[upperName]; ok && dt != "" {
+				ct.DataTypeValue = sql.NullString{String: dt, Valid: true}
 			}
 
 			columnTypes = append(columnTypes, ct)
@@ -561,7 +630,7 @@ func (m Migrator) DropIndex(value any, name string) error {
 			name = idx.Name
 		}
 
-		return m.DB.Exec("DROP INDEX ?", clause.Column{Name: name}, clause.Table{Name: stmt.Schema.Table}).Error
+		return m.DB.Exec("DROP INDEX ?", clause.Column{Name: name}).Error
 	})
 }
 
@@ -574,9 +643,14 @@ func (m Migrator) HasIndex(value any, name string) bool {
 		// 索引名已是完整名称（如 IDX_TEST_USERS_EMAIL），直接大写后与 USER_INDEXES 中存储的名称比较，
 		// 不能再次通过 IndexName() 拼装，否则会得到错误的名字。
 		indexName := strings.ToUpper(name)
+		tableName := stmt.Table
+		if strings.Contains(tableName, ".") {
+			parts := strings.SplitN(tableName, ".", 2)
+			tableName = parts[1]
+		}
 		return m.DB.Raw(
 			"SELECT COUNT(*) FROM USER_INDEXES WHERE TABLE_NAME = ? AND INDEX_NAME = ?",
-			m.Migrator.DB.NamingStrategy.TableName(stmt.Table),
+			tableName,
 			indexName,
 		).Row().Scan(&count)
 	})
@@ -641,6 +715,20 @@ func (m Migrator) CreateOnUpdateTrigger(value any, rel *schema.Relationship) err
 	}
 
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		// 验证标识符安全性
+		if err := validateOracleIdentifier(rel.Field.DBName); err != nil {
+			return err
+		}
+		if err := validateOracleIdentifier(stmt.Schema.Table); err != nil {
+			return err
+		}
+		if err := validateOracleIdentifier(constraint.References[0].DBName); err != nil {
+			return err
+		}
+		if err := validateOracleIdentifier(constraint.ReferenceSchema.Table); err != nil {
+			return err
+		}
+
 		triggerName := onUpdateTriggerName(
 			stmt.Schema.Table,
 			rel.Field.DBName,

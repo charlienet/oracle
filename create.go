@@ -15,6 +15,10 @@ import (
 	"github.com/charlienet/oracle/utils"
 )
 
+type txBeginner interface {
+	Begin() (*sql.Tx, error)
+}
+
 func Create(db *gorm.DB) {
 	stmt := db.Statement
 	if stmt == nil {
@@ -89,6 +93,12 @@ func Create(db *gorm.DB) {
 					stmt.AddClauseIfNotExists(clauses.WhenMatched{Set: filteredSet})
 				}
 			}
+			// 检测是否为批量 MERGE
+			if len(values.Values) > 1 {
+				db.AddError(fmt.Errorf("batch UPSERT (MERGE) is not supported, use single-row Create instead"))
+				return
+			}
+			
 			stmt.AddClauseIfNotExists(clauses.WhenNotMatched{Values: values})
 
 			stmt.Build("MERGE", "WHEN MATCHED", "WHEN NOT MATCHED")
@@ -128,27 +138,36 @@ func Create(db *gorm.DB) {
 			if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
 				tx = sqlTx
 				isTransaction = true
-			} else if sqlDb, ok := stmt.ConnPool.(*sql.DB); ok {
-				tx, err = sqlDb.Begin()
+			} else if starter, ok := stmt.ConnPool.(txBeginner); ok {
+				tx, err = starter.Begin()
 				if err != nil {
 					db.AddError(err)
 					return
 				}
 				defer func() {
 					if db.Error != nil && !isTransaction {
-						_ = tx.Rollback()
+						if err := tx.Rollback(); err != nil {
+							db.AddError(err)
+						}
 					} else if !isTransaction {
-						_ = tx.Commit()
+						if err := tx.Commit(); err != nil {
+							db.AddError(err)
+						}
 					}
 				}()
 			} else {
-				db.AddError(fmt.Errorf("unsupported connection pool type"))
+				db.AddError(fmt.Errorf("unsupported connection pool type: %T", stmt.ConnPool))
 				return
 			}
 
 			for rowIdx, vals := range values.Values {
 				// HACK HACK: replace values one by one, assuming its value layout will be the same all the time, i.e. aligned
+				// 明确只覆盖 INSERT 列对应的 Vars，不影响 RETURNING INTO 的输出参数
+				insertVarCount := len(values.Columns)
 				for colIdx, val := range vals {
+					if colIdx >= insertVarCount {
+						break // 安全保护：不覆盖 RETURNING INTO 的输出参数
+					}
 					switch v := val.(type) {
 					case bool:
 						if v {

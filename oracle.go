@@ -107,7 +107,9 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 		NamingStrategy: db.NamingStrategy,
 		DBName:         d.DBName,
 	}
-	d.DefaultStringSize = 1024
+	if d.DefaultStringSize == 0 {
+		d.DefaultStringSize = 1024
+	}
 
 	// register callbacks
 	//callbacks.RegisterDefaultCallbacks(db, &callbacks.Config{WithReturning: true})
@@ -118,7 +120,9 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 	})
 
 	// d.DriverName = "godror"
-	d.DriverName = "oracle"
+	if d.DriverName == "" {
+		d.DriverName = "oracle"
+	}
 
 	// godror.Batch
 
@@ -279,7 +283,13 @@ func (d Dialector) getOrderByColumns(stmt *gorm.Statement) string {
 				if i > 0 {
 					orderByBuilder.WriteString(", ")
 				}
-				orderByBuilder.WriteString(`"` + column.Column.Name + `"`)
+				if d.SkipQuoteIdentifiers {
+					orderByBuilder.WriteString(column.Column.Name)
+				} else {
+					// 转义列名中的双引号
+					escapedName := strings.ReplaceAll(column.Column.Name, `"`, `""`)
+					orderByBuilder.WriteString(`"` + escapedName + `"`)
+				}
 				if column.Desc {
 					orderByBuilder.WriteString(" DESC")
 				}
@@ -289,7 +299,13 @@ func (d Dialector) getOrderByColumns(stmt *gorm.Statement) string {
 	}
 	// 没有 ORDER BY 时使用主键列作为默认排序，避免分页结果不稳定
 	if stmt.Schema != nil && stmt.Schema.PrioritizedPrimaryField != nil {
-		return `"` + stmt.Schema.PrioritizedPrimaryField.DBName + `"`
+		if d.SkipQuoteIdentifiers {
+			return stmt.Schema.PrioritizedPrimaryField.DBName
+		} else {
+			// 转义主键列名中的双引号
+			escapedName := strings.ReplaceAll(stmt.Schema.PrioritizedPrimaryField.DBName, `"`, `""`)
+			return `"` + escapedName + `"`
+		}
 	}
 	return "NULL"
 }

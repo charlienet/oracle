@@ -5,6 +5,7 @@ package driver_adapter
 import (
 	"context"
 	"database/sql"
+	"sync"
 )
 
 // DriverType 驱动类型枚举
@@ -107,15 +108,22 @@ type Adapter interface {
 }
 
 // Registry 驱动适配器注册表
-var registry = map[DriverType]func() Adapter{}
+var (
+	registry   = map[DriverType]func() Adapter{}
+	registryMu sync.RWMutex
+)
 
 // Register 注册驱动适配器
 func Register(driverType DriverType, factory func() Adapter) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	registry[driverType] = factory
 }
 
 // Get 获取驱动适配器
 func Get(driverType DriverType) Adapter {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
 	if factory, ok := registry[driverType]; ok {
 		return factory()
 	}
@@ -124,6 +132,8 @@ func Get(driverType DriverType) Adapter {
 
 // ListDrivers 列出所有已注册的驱动
 func ListDrivers() []DriverType {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
 	types := make([]DriverType, 0, len(registry))
 	for t := range registry {
 		types = append(types, t)

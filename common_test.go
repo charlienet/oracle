@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -250,5 +251,83 @@ func TestValidateCreateData(t *testing.T) {
 				t.Errorf("validateCreateData(%v) error = %q, want containing %q", tt.data, err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestSoftDeleteFieldDetection(t *testing.T) {
+	// 测试场景 1: gorm.DeletedAt 类型字段
+	type Model1 struct {
+		ID        uint `gorm:"primaryKey"`
+		DeletedAt gorm.DeletedAt
+	}
+	sch1 := parseTestSchema(t, &Model1{})
+	
+	// 验证能正确检测到软删除字段
+	var softDeleteField1 *schema.Field
+	for _, field := range sch1.Fields {
+		if reflect.TypeOf(field.FieldType) == reflect.TypeFor[gorm.DeletedAt]() {
+			softDeleteField1 = field
+			break
+		}
+		if (field.Name == "DeletedAt" || field.DBName == "deleted_at") &&
+			(field.DataType == schema.Time || field.GORMDataType == schema.Time) {
+			softDeleteField1 = field
+			break
+		}
+	}
+	if softDeleteField1 == nil {
+		t.Errorf("Expected to detect soft delete field in Model1, but got nil")
+	} else if softDeleteField1.Name != "DeletedAt" {
+		t.Errorf("Expected soft delete field name to be 'DeletedAt', but got '%s'", softDeleteField1.Name)
+	}
+
+	// 测试场景 2: 普通 time.Time 字段名为 DeletedAt
+	type Model2 struct {
+		ID        uint `gorm:"primaryKey"`
+		DeletedAt time.Time
+	}
+	sch2 := parseTestSchema(t, &Model2{})
+	
+	// 验证能正确检测到软删除字段
+	var softDeleteField2 *schema.Field
+	for _, field := range sch2.Fields {
+		if reflect.TypeOf(field.FieldType) == reflect.TypeFor[gorm.DeletedAt]() {
+			softDeleteField2 = field
+			break
+		}
+		if (field.Name == "DeletedAt" || field.DBName == "deleted_at") &&
+			(field.DataType == schema.Time || field.GORMDataType == schema.Time) {
+			softDeleteField2 = field
+			break
+		}
+	}
+	if softDeleteField2 == nil {
+		t.Errorf("Expected to detect soft delete field in Model2, but got nil")
+	} else if softDeleteField2.Name != "DeletedAt" {
+		t.Errorf("Expected soft delete field name to be 'DeletedAt', but got '%s'", softDeleteField2.Name)
+	}
+
+	// 测试场景 3: 普通 time.Time 字段名不是 DeletedAt
+	type Model3 struct {
+		ID        uint `gorm:"primaryKey"`
+		CreatedAt time.Time
+	}
+	sch3 := parseTestSchema(t, &Model3{})
+	
+	// 验证不会误判为软删除字段
+	var softDeleteField3 *schema.Field
+	for _, field := range sch3.Fields {
+		if reflect.TypeOf(field.FieldType) == reflect.TypeFor[gorm.DeletedAt]() {
+			softDeleteField3 = field
+			break
+		}
+		if (field.Name == "DeletedAt" || field.DBName == "deleted_at") &&
+			(field.DataType == schema.Time || field.GORMDataType == schema.Time) {
+			softDeleteField3 = field
+			break
+		}
+	}
+	if softDeleteField3 != nil {
+		t.Errorf("Expected no soft delete field in Model3, but got field '%s'", softDeleteField3.Name)
 	}
 }

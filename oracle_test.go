@@ -19,7 +19,7 @@ type limitModel struct {
 }
 
 func newTestDialector(dbVer string, defaultStringSize uint) *Dialector {
-	return &Dialector{Config: &Config{DBVer: dbVer, DefaultStringSize: defaultStringSize}}
+	return &Dialector{Config: &Config{DBVer: dbVer, DefaultStringSize: defaultStringSize, SkipQuoteIdentifiers: false}}
 }
 
 func newTestStatement(d *Dialector) *gorm.Statement {
@@ -496,8 +496,8 @@ func TestRewriteLimit11(t *testing.T) {
 		d.RewriteLimit11(limitClause(10, 5), stmt)
 		got := stmt.SQL.String()
 
-		if !strings.Contains(got, "ORDER BY NAME DESC") {
-			t.Errorf("RewriteLimit11 output %q missing ORDER BY NAME DESC", got)
+		if !strings.Contains(got, `ORDER BY "NAME" DESC`) {
+			t.Errorf("RewriteLimit11 output %q missing ORDER BY \"NAME\" DESC", got)
 		}
 	})
 

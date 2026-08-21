@@ -1,8 +1,9 @@
 package driver_adapter
 
-import "slices"
-
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // TestRegistryRegisterAndGet 验证 Register 后 Get 能返回对应适配器
 func TestRegistryRegisterAndGet(t *testing.T) {
