@@ -1,8 +1,10 @@
 package oracle
 
 import (
+	"reflect"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPatchUpperDBNameKeysIdempotent(t *testing.T) {
@@ -51,4 +53,101 @@ func TestPatchUpperDBNameKeysConcurrent(t *testing.T) {
 	if _, ok := sch.FieldsByDBName["NAME"]; !ok {
 		t.Errorf("field NAME not found after concurrent patch")
 	}
+}
+
+// ---- TestIsZeroValue ----
+
+func TestIsZeroValue(t *testing.T) {
+	zeroTime := time.Time{}
+	now := time.Now()
+	ptrNil := (*int)(nil)
+	ptrVal := 42
+
+	type zeroStruct struct {
+		A int
+		B string
+	}
+
+	tests := []struct {
+		name  string
+		value any
+		want  bool
+	}{
+		{"nil", nil, true},
+		{"zero int", 0, true},
+		{"non-zero int", 42, false},
+		{"zero string", "", true},
+		{"non-zero string", "abc", false},
+		{"zero bool", false, true},
+		{"true bool", true, false},
+		{"zero float", 0.0, true},
+		{"non-zero float", 3.14, false},
+		{"zero time", zeroTime, true},
+		{"non-zero time", now, false},
+		{"nil pointer", ptrNil, true},
+		{"non-nil pointer", &ptrVal, false},
+		{"zero struct", zeroStruct{}, true},
+		{"non-zero struct", zeroStruct{A: 1}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isZeroValue(tt.value); got != tt.want {
+				t.Errorf("isZeroValue(%v) = %v, want %v", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---- TestSetFieldValue ----
+
+func TestSetFieldValue(t *testing.T) {
+	t.Run("direct assignment", func(t *testing.T) {
+		dest := 0
+		rv := reflect.ValueOf(&dest).Elem()
+		setFieldValue(rv, 42)
+		if dest != 42 {
+			t.Errorf("direct assignment got %d, want 42", dest)
+		}
+	})
+
+	t.Run("type conversion", func(t *testing.T) {
+		dest := 0
+		rv := reflect.ValueOf(&dest).Elem()
+		setFieldValue(rv, int64(7))
+		if dest != 7 {
+			t.Errorf("type conversion got %d, want 7", dest)
+		}
+	})
+
+	t.Run("pointer field", func(t *testing.T) {
+		var dest *int
+		rv := reflect.ValueOf(&dest).Elem()
+		setFieldValue(rv, 9)
+		if dest == nil {
+			t.Fatal("pointer field not set")
+		}
+		if *dest != 9 {
+			t.Errorf("pointer field got %d, want 9", *dest)
+		}
+	})
+
+	t.Run("nil value ignored", func(t *testing.T) {
+		dest := 5
+		rv := reflect.ValueOf(&dest).Elem()
+		setFieldValue(rv, nil)
+		if dest != 5 {
+			t.Errorf("nil value changed dest to %d, want 5", dest)
+		}
+	})
+
+	t.Run("unsettable value ignored", func(t *testing.T) {
+		// 非可寻址的字段值，setFieldValue 应直接返回且不 panic
+		s := "immutable"
+		rv := reflect.ValueOf(s)
+		setFieldValue(rv, "changed")
+		if s != "immutable" {
+			t.Errorf("unsettable value changed to %q", s)
+		}
+	})
 }
