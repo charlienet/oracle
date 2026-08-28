@@ -36,7 +36,7 @@ func TestSoftDeleteDetection(t *testing.T) {
 		t.Fatalf("Failed to migrate tables: %v", err)
 	}
 	defer func() {
-		db.Migrator().DropTable(&SoftDeleteModel{}, &TimeFieldModel{}, &NormalModel{})
+		_ = db.Migrator().DropTable(&SoftDeleteModel{}, &TimeFieldModel{}, &NormalModel{})
 	}()
 
 	// 测试场景 1: 使用 gorm.DeletedAt 类型的软删除

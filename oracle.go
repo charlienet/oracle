@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm/utils"
 
 	// _ "github.com/godror/godror"
-	_ "github.com/sijms/go-ora/v2"
+	go_ora "github.com/sijms/go-ora/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
 	"gorm.io/gorm/clause"
@@ -128,6 +128,16 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 
 	if d.Conn != nil {
 		db.ConnPool = d.Conn
+	} else if d.DriverName == "" || d.DriverName == "oracle" {
+		// go-ora 驱动路径：包装驱动，在参数绑定前将底层为基本类型的
+		// 自定义类型（Go 枚举）规范化为裸基本类型，避免命名类型在
+		// go-ora 的 setDataType 中坠入 UDT/unsupported 分支报错
+		goOraDriver := &enumNormalizeDriver{inner: go_ora.NewDriver()}
+		connector, err := goOraDriver.OpenConnector(d.DSN)
+		if err != nil {
+			return err
+		}
+		db.ConnPool = sql.OpenDB(connector)
 	} else {
 		db.ConnPool, err = sql.Open(d.DriverName, d.DSN)
 		if err != nil {
@@ -136,7 +146,10 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 	}
 	err = db.ConnPool.QueryRowContext(context.Background(), "select version from product_component_version where rownum = 1").Scan(&d.DBVer)
 	if err != nil {
-		return err
+		// 版本探测失败不阻断连接：降级为空版本号，全链路按保守的 11g 行为运行
+		//（ROWNUM 分页、NUMBER(1) 布尔、无 IDENTITY），保证 DryRun/离线/受限账号可用
+		d.DBVer = ""
+		db.Logger.Warn(context.Background(), "oracle: 获取数据库版本失败，将按保守的 11g 行为运行: %v", err)
 	}
 
 	if err = db.Callback().Create().Replace("gorm:create", Create); err != nil {
@@ -183,22 +196,22 @@ func (d Dialector) RewriteLimit(c clause.Clause, builder clause.Builder) {
 		if stmt, ok := builder.(*gorm.Statement); ok {
 			if _, ok := stmt.Clauses["ORDER BY"]; !ok {
 				s := stmt.Schema
-				builder.WriteString("ORDER BY ")
+				_, _ = builder.WriteString("ORDER BY ")
 				if s != nil && s.PrioritizedPrimaryField != nil {
 					builder.WriteQuoted(s.PrioritizedPrimaryField.DBName)
-					builder.WriteByte(' ')
+					_ = builder.WriteByte(' ')
 				} else {
-					builder.WriteString("(SELECT NULL FROM ")
-					builder.WriteString(d.DummyTableName())
-					builder.WriteString(")")
+					_, _ = builder.WriteString("(SELECT NULL FROM ")
+					_, _ = builder.WriteString(d.DummyTableName())
+					_, _ = builder.WriteString(")")
 				}
 			}
 		}
 
 		if offset := limit.Offset; offset > 0 {
-			builder.WriteString(" OFFSET ")
-			builder.WriteString(strconv.Itoa(offset))
-			builder.WriteString(" ROWS")
+			_, _ = builder.WriteString(" OFFSET ")
+			_, _ = builder.WriteString(strconv.Itoa(offset))
+			_, _ = builder.WriteString(" ROWS")
 		}
 
 		v := 0
@@ -206,9 +219,9 @@ func (d Dialector) RewriteLimit(c clause.Clause, builder clause.Builder) {
 			v = *limit.Limit
 		}
 		if v > 0 {
-			builder.WriteString(" FETCH NEXT ")
-			builder.WriteString(strconv.Itoa(v))
-			builder.WriteString(" ROWS ONLY")
+			_, _ = builder.WriteString(" FETCH NEXT ")
+			_, _ = builder.WriteString(strconv.Itoa(v))
+			_, _ = builder.WriteString(" ROWS ONLY")
 		}
 	}
 }
@@ -257,14 +270,16 @@ func (d Dialector) RewriteLimit11(c clause.Clause, builder clause.Builder) {
 		stmt.SQL.WriteString(subQuerySQL)
 	} else {
 		// 只有 Offset 的情况
-		// 偏移后取剩余所有记录
+		// 偏移后取剩余所有记录：跳过前 offsetRows 行（ROW_NUM > offsetRows），
+		// 即返回第 offsetRows+1 行起的数据，与 limit+offset 分支的
+		// BETWEEN offsetRows+1 AND offsetRows+limitRows 语义一致
 		subQuerySQL := fmt.Sprintf(
 			"SELECT * FROM (SELECT T.*, ROW_NUMBER() OVER (ORDER BY %s) AS %s FROM (%s) T) WHERE %s > %d",
 			d.getOrderByColumns(stmt),
 			RowNumberAliasForOracle11,
 			strings.TrimSpace(stmt.SQL.String()),
 			RowNumberAliasForOracle11,
-			offsetRows+1,
+			offsetRows,
 		)
 
 		stmt.SQL.Reset()
@@ -307,7 +322,7 @@ func (d Dialector) getLimitRows(limit clause.Limit) (limitRows int, hasLimit boo
 }
 
 func (d Dialector) DefaultValueOf(*schema.Field) clause.Expression {
-	return clause.Expr{SQL: "VALUES (DEFAULT)"}
+	return clause.Expr{SQL: "DEFAULT"}
 }
 
 func (d Dialector) Migrator(db *gorm.DB) gorm.Migrator {
@@ -323,22 +338,22 @@ func (d Dialector) Migrator(db *gorm.DB) gorm.Migrator {
 }
 
 func (d Dialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement, v any) {
-	writer.WriteString(":")
-	writer.WriteString(strconv.Itoa(len(stmt.Vars)))
+	_, _ = writer.WriteString(":")
+	_, _ = writer.WriteString(strconv.Itoa(len(stmt.Vars)))
 }
 
 func (d Dialector) QuoteTo(writer clause.Writer, str string) {
 	if d.SkipQuoteIdentifiers {
-		writer.WriteString(str)
+		_, _ = writer.WriteString(str)
 		return
 	}
 
 	if str != "" && IsReservedWord(str) {
-		writer.WriteByte('"')
-		writer.WriteString(str)
-		writer.WriteByte('"')
+		_ = writer.WriteByte('"')
+		_, _ = writer.WriteString(str)
+		_ = writer.WriteByte('"')
 	} else {
-		writer.WriteString(str)
+		_, _ = writer.WriteString(str)
 	}
 }
 
@@ -360,8 +375,6 @@ func (d Dialector) Explain(sql string, vars ...any) string {
 }
 
 func (d Dialector) DataTypeOf(field *schema.Field) string {
-	delete(field.TagSettings, "RESTRICT")
-
 	var sqlType string
 
 	switch field.DataType {
@@ -432,6 +445,27 @@ func (d Dialector) DataTypeOf(field *schema.Field) string {
 		sqlType = "BLOB"
 	default:
 		sqlType = string(field.DataType)
+
+		// 用户显式 type 标签（如 "varchar(1)"、"VARCHAR(20)"、"varchar2(64)"）大小写不敏感
+		// 归一到 VARCHAR2(n)：保证 AutoMigrate 时 fullDataType 与 Oracle 数据字典
+		//（VARCHAR2）一致，避免每次迁移都误判列类型差异而反复 ALTER。
+		// 注意 nvarchar/nvarchar2 语义不同（国家字符集），保持原样不归一。
+		lower := strings.ToLower(sqlType)
+		if strings.HasPrefix(lower, "varchar") && !strings.HasPrefix(lower, "nvarchar") {
+			size := 0
+			if i := strings.IndexByte(lower, '('); i > 0 && strings.HasSuffix(lower, ")") {
+				if n, err := strconv.Atoi(lower[i+1 : len(lower)-1]); err == nil {
+					size = n
+				}
+			}
+			if size <= 0 {
+				size = int(d.DefaultStringSize)
+				if size <= 0 {
+					size = 1024
+				}
+			}
+			sqlType = fmt.Sprintf("VARCHAR2(%d)", size)
+		}
 
 		// text/json 统一映射为 CLOB：
 		// Oracle 21c+ 虽有原生 JSON 类型，但 go-ora（纯 Go）对 JSON 列仅按

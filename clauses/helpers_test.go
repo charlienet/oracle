@@ -20,12 +20,12 @@ func (testDialector) DataTypeOf(*schema.Field) string                { return ""
 func (testDialector) DefaultValueOf(*schema.Field) clause.Expression { return nil }
 
 func (testDialector) BindVarTo(writer clause.Writer, stmt *gorm.Statement, v any) {
-	writer.WriteString(":")
-	writer.WriteString(strconv.Itoa(len(stmt.Vars)))
+	_, _ = writer.WriteString(":")
+	_, _ = writer.WriteString(strconv.Itoa(len(stmt.Vars)))
 }
 
 func (testDialector) QuoteTo(writer clause.Writer, str string) {
-	writer.WriteString(str)
+	_, _ = writer.WriteString(str)
 }
 
 func (testDialector) Explain(sql string, vars ...any) string { return sql }

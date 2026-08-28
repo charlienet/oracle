@@ -166,7 +166,7 @@ func (a *GoOraAdapter) GetConnection(db *sql.DB) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	var rawConn any
 	err = conn.Raw(func(driverConn any) error {

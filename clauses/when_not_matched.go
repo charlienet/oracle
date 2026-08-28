@@ -29,11 +29,11 @@ func (w WhenNotMatched) Build(builder clause.Builder) {
 			panic("cannot insert more than one rows due to Oracle SQL language restriction")
 		}
 
-		builder.WriteString("THEN INSERT ")
+		_, _ = builder.WriteString("THEN INSERT ")
 		w.Values.Build(builder)
 
 		if len(w.Where.Exprs) > 0 {
-			builder.WriteString(" WHERE ")
+			_, _ = builder.WriteString(" WHERE ")
 			w.Where.Build(builder)
 		}
 	}

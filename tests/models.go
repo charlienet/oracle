@@ -78,3 +78,32 @@ type SeqDefaultViaDriverModel struct {
 func (SeqDefaultViaDriverModel) TableName() string {
 	return "TEST_SEQ_DEF"
 }
+
+// MerchantStatus 商户状态枚举：底层为 int 的自定义类型（用户真实业务类型的形态）
+type MerchantStatus int
+
+const (
+	MerchantStatusCreated      MerchantStatus = 0 // 创建或待审核
+	MerchantStatusExistence    MerchantStatus = 1 // 正常
+	MerchantStatusDeregistered MerchantStatus = 3 // 注销
+)
+
+// MerchantName 商户名称：底层为 string 的自定义类型
+type MerchantName string
+
+// MerchantBool 审核标记：底层为 bool 的自定义类型
+type MerchantBool bool
+
+// Merchant 测试底层基本类型自定义类型（裸 enum，无 serializer / Valuer / Scanner，
+// 验证 go-ora setDataType 按 Kind 回落编码的端到端链路）
+type Merchant struct {
+	ID        uint           `gorm:"column:id;primaryKey;autoIncrement"`
+	Name      MerchantName   `gorm:"size:100"`
+	Status    MerchantStatus `gorm:"default:0"`
+	Verified  MerchantBool   `gorm:"default:false"`
+	CreatedAt time.Time
+}
+
+func (Merchant) TableName() string {
+	return "TEST_MERCHANTS"
+}

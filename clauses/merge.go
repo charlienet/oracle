@@ -21,25 +21,25 @@ func MergeDefaultExcludeName() string {
 // Build build from clause
 func (merge Merge) Build(builder clause.Builder) {
 	clause.Insert{}.Build(builder)
-	builder.WriteString(" USING (")
+	_, _ = builder.WriteString(" USING (")
 	for idx, iface := range merge.Using {
 		if idx > 0 {
-			builder.WriteByte(' ')
+			_ = builder.WriteByte(' ')
 		}
-		builder.WriteString(iface.Name())
-		builder.WriteByte(' ')
+		_, _ = builder.WriteString(iface.Name())
+		_ = builder.WriteByte(' ')
 		iface.Build(builder)
 	}
-	builder.WriteString(") ")
-	builder.WriteString(MergeDefaultExcludeName())
-	builder.WriteString(" ON (")
+	_, _ = builder.WriteString(") ")
+	_, _ = builder.WriteString(MergeDefaultExcludeName())
+	_, _ = builder.WriteString(" ON (")
 	for idx, on := range merge.On {
 		if idx > 0 {
-			builder.WriteString(" AND ")
+			_, _ = builder.WriteString(" AND ")
 		}
 		on.Build(builder)
 	}
-	builder.WriteString(")")
+	_, _ = builder.WriteString(")")
 }
 
 // MergeClause merge values clauses

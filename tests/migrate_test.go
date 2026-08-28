@@ -26,7 +26,7 @@ func TestAutoMigrate(t *testing.T) {
 
 func TestAddColumn(t *testing.T) {
 	// 先创建表
-	DB.AutoMigrate(&User{})
+	_ = DB.AutoMigrate(&User{})
 
 	// 添加列（需要定义新模型）
 	type UserWithPhone struct {
@@ -79,7 +79,7 @@ func TestBigStringMapsToCLOBOn11g(t *testing.T) {
 		t.Fatalf("failed to migrate: %v", err)
 	}
 	defer func() {
-		DB.Migrator().DropTable(&BigStringModel{})
+		_ = DB.Migrator().DropTable(&BigStringModel{})
 	}()
 
 	// 验证列类型为 CLOB（Oracle 数据字典列名大写存储）

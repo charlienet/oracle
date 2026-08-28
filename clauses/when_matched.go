@@ -30,7 +30,7 @@ func (w WhenMatched) MergeClause(clause *clause.Clause) {
 // 此处只输出 "THEN UPDATE SET ..."。
 func (w WhenMatched) Build(builder clause.Builder) {
 	if len(w.Set) > 0 {
-		builder.WriteString("THEN UPDATE SET ")
+		_, _ = builder.WriteString("THEN UPDATE SET ")
 		
 		// 修复：将 GORM 原生的 "excluded" 别名替换为 Oracle 的 "exclude"
 		for i := range w.Set {
@@ -53,12 +53,12 @@ func (w WhenMatched) Build(builder clause.Builder) {
 		w.Set.Build(builder)
 
 		if len(w.Where.Exprs) > 0 {
-			builder.WriteString(" WHERE ")
+			_, _ = builder.WriteString(" WHERE ")
 			w.Where.Build(builder)
 		}
 
 		if len(w.Delete.Exprs) > 0 {
-			builder.WriteString(" DELETE WHERE ")
+			_, _ = builder.WriteString(" DELETE WHERE ")
 			w.Delete.Build(builder)
 		}
 	}

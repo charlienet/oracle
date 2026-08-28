@@ -81,7 +81,7 @@ func TestAutoIncrementViaSequence(t *testing.T) {
 func TestExplicitSequenceDefaultValue(t *testing.T) {
 	// 先删除可能残留的对象（忽略错误：对象可能不存在）
 	DB.Exec("DROP SEQUENCE SEQ_TEST_SEQ_DEFAULT")
-	DB.Migrator().DropTable(&SeqDefaultModel{})
+	_ = DB.Migrator().DropTable(&SeqDefaultModel{})
 
 	// 创建序列
 	if err := DB.Exec("CREATE SEQUENCE SEQ_TEST_SEQ_DEFAULT START WITH 100 INCREMENT BY 1 NOCACHE").Error; err != nil {
@@ -166,7 +166,7 @@ END;`
 //   - 12c+ 则不创建触发器，直接生成 DEFAULT SEQ_TEST_SEQ_DEF_CODE.NEXTVAL。
 func TestSequenceDefaultViaAutoMigrate(t *testing.T) {
 	// 先清理可能残留的对象（忽略错误：对象可能不存在）
-	DB.Migrator().DropTable(&SeqDefaultViaDriverModel{})
+	_ = DB.Migrator().DropTable(&SeqDefaultViaDriverModel{})
 	DB.Exec("DROP SEQUENCE SEQ_TEST_SEQ_DEF_CODE")
 	DB.Exec("DROP SEQUENCE SEQ_TEST_SEQ_DEF")
 	DB.Exec("DROP TRIGGER SEQDEF_TRG_TEST_SEQ_DEF_CODE")

@@ -34,15 +34,55 @@ func hasNEXTVALDefault(field *schema.Field) bool {
 }
 
 func (m Migrator) CurrentDatabase() (name string) {
+	// 兼容值接收者与指针接收者两种形态：先尝试指针断言，失败则取地址
+	var dialector *Dialector
+	if d, ok := m.Dialector.(*Dialector); ok {
+		dialector = d
+	} else if d, ok := m.Dialector.(Dialector); ok {
+		dialector = &d
+	} else {
+		return
+	}
 	m.DB.Raw(
-		fmt.Sprintf(`SELECT ORA_DATABASE_NAME as "Current Database" FROM %s`, m.Dialector.(*Dialector).DummyTableName()),
-	).Row().Scan(&name)
+		fmt.Sprintf(`SELECT ORA_DATABASE_NAME as "Current Database" FROM %s`, dialector.DummyTableName()),
+	).Row().Scan(&name) //nolint:errcheck // 始终返回 "" 作为兜底，Scan 错误不影响语义
 	return
 }
 
 func (m Migrator) CreateTable(values ...any) error {
+	// 捕获各关系的 ON UPDATE 约束信息，供建表后创建触发器使用。
+	// 必须在 TryRemoveOnUpdate 清理 TagSettings 之前解析：
+	// 该清理会从 CONSTRAINT 标签中移除 OnUpdate 子项（否则建表 DDL 生成
+	// Oracle 不支持的 ON UPDATE 子句，ORA-00907），但触发器逻辑依赖
+	// 同一标签解析 OnUpdate，若先清理则触发器永远不会创建。
+	type onUpdateInfo struct {
+		value      any
+		rel        *schema.Relationship
+		constraint *schema.Constraint
+		table      string
+	}
+	onUpdateInfos := make([]onUpdateInfo, 0)
 	for _, value := range values {
-		m.TryRemoveOnUpdate(value)
+		_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
+			if stmt.Schema == nil {
+				return nil
+			}
+			for _, rel := range stmt.Schema.Relationships.Relations {
+				if c := rel.ParseConstraint(); c != nil && c.OnUpdate != "" {
+					onUpdateInfos = append(onUpdateInfos, onUpdateInfo{
+						value: value, rel: rel, constraint: c, table: stmt.Schema.Table,
+					})
+				}
+			}
+			return nil
+		})
+	}
+
+	// 清理 CONSTRAINT 标签中的 ON UPDATE 子项，避免建表 DDL 报 ORA-00907
+	for _, value := range values {
+		if err := m.TryRemoveOnUpdate(value); err != nil {
+			return err
+		}
 	}
 
 	// 先创建表
@@ -50,22 +90,14 @@ func (m Migrator) CreateTable(values ...any) error {
 		return err
 	}
 
-	// 然后创建 ON UPDATE 触发器
-	for _, value := range values {
-		m.RunWithValue(value, func(stmt *gorm.Statement) error {
-			if stmt.Schema == nil {
-				return nil
-			}
-			for _, rel := range stmt.Schema.Relationships.Relations {
-				if err := m.CreateOnUpdateTrigger(value, rel); err != nil {
-					// 触发器创建失败不阻止表创建，但记录警告
-					m.DB.Logger.Warn(m.DB.Statement.Context, 
-						"failed to create ON UPDATE trigger for %s.%s: %v", 
-						stmt.Schema.Table, rel.Field.Name, err)
-				}
-			}
-			return nil
-		})
+	// 然后创建 ON UPDATE 触发器（使用清理前捕获的 constraint 信息）
+	for _, info := range onUpdateInfos {
+		if err := m.createOnUpdateTrigger(info.value, info.rel, info.constraint); err != nil {
+			// 触发器创建失败不阻止表创建，但记录警告
+			m.DB.Logger.Warn(m.DB.Statement.Context,
+				"failed to create ON UPDATE trigger for %s.%s: %v",
+				info.table, info.rel.Field.Name, err)
+		}
 	}
 
 	// Oracle 11g 不支持 IDENTITY 列，为自增主键创建序列 + BEFORE INSERT 触发器
@@ -117,7 +149,7 @@ func (m Migrator) sequenceName(table string) string {
 	if len(name) > 30 {
 		// 使用 CRC32 哈希保证唯一性（8 字符）
 		hash := fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(table)))
-		name = name[:21] + "_" + hash  // 21 + 1 + 8 = 30
+		name = name[:21] + "_" + hash // 21 + 1 + 8 = 30
 	}
 	return name
 }
@@ -140,17 +172,17 @@ func validateOracleIdentifier(name string) error {
 	if len(name) > 30 {
 		return fmt.Errorf("identifier %q exceeds 30 characters", name)
 	}
-	
+
 	// 只允许字母、数字、下划线、$、#
 	for i, r := range name {
 		if i == 0 {
 			// 第一个字符只能是字母或下划线
-			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_') {
+			if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && r != '_' {
 				return fmt.Errorf("identifier %q contains invalid characters", name)
 			}
 		} else {
 			// 其他字符可以是字母、数字、下划线、$、#
-			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '$' || r == '#') {
+			if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '$' && r != '#' {
 				return fmt.Errorf("identifier %q contains invalid characters", name)
 			}
 		}
@@ -304,7 +336,7 @@ func (m Migrator) DropTable(values ...any) error {
 func (m Migrator) HasTable(value any) bool {
 	var count int64
 
-	m.RunWithValue(value, func(stmt *gorm.Statement) error {
+	_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		if stmt.Schema != nil && strings.Contains(stmt.Schema.Table, ".") {
 			parts := strings.SplitN(stmt.Schema.Table, ".", 2)
 			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -313,7 +345,7 @@ func (m Migrator) HasTable(value any) bool {
 			// 去除可能的引号
 			owner := strings.Trim(parts[0], `"`)
 			table := strings.Trim(parts[1], `"`)
-			return m.DB.Raw("SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = ? AND TABLE_NAME = ?", 
+			return m.DB.Raw("SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = ? AND TABLE_NAME = ?",
 				strings.ToUpper(owner), strings.ToUpper(table)).Row().Scan(&count)
 		} else {
 			return m.DB.Raw("SELECT COUNT(*) FROM USER_TABLES WHERE TABLE_NAME = ?", stmt.Table).Row().Scan(&count)
@@ -355,7 +387,7 @@ func (m Migrator) ColumnTypes(value any) ([]gorm.ColumnType, error) {
 		// 在循环前一次性查询所有列的类型
 		dataTypes := make(map[string]string)
 		if rows, err := m.DB.Raw("SELECT COLUMN_NAME, DATA_TYPE FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ?", stmt.Table).Rows(); err == nil {
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 			for rows.Next() {
 				var colName, dt string
 				if err := rows.Scan(&colName, &dt); err == nil {
@@ -373,8 +405,6 @@ func (m Migrator) ColumnTypes(value any) ([]gorm.ColumnType, error) {
 				ct.NameValue = sql.NullString{String: dbName, Valid: true}
 			}
 
-
-			
 			if dt, ok := dataTypes[upperName]; ok && dt != "" {
 				ct.DataTypeValue = sql.NullString{String: dt, Valid: true}
 			}
@@ -444,7 +474,7 @@ func (m Migrator) DropColumn(value any, name string) error {
 		}
 
 		return m.DB.Exec(
-			"ALTER TABLE ? DROP ?",
+			"ALTER TABLE ? DROP COLUMN ?",
 			clause.Table{Name: stmt.Schema.Table},
 			clause.Column{Name: name},
 		).Error
@@ -479,7 +509,7 @@ func (m Migrator) HasColumn(value any, field string) bool {
 			}
 			owner := strings.Trim(parts[0], `"`)
 			table := strings.Trim(parts[1], `"`)
-			return m.DB.Raw("SELECT COUNT(*) FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", 
+			return m.DB.Raw("SELECT COUNT(*) FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)",
 				strings.ToUpper(owner), strings.ToUpper(table), field).Row().Scan(&count)
 		} else {
 			return m.DB.Raw("SELECT COUNT(*) FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", stmt.Table, field).Row().Scan(&count)
@@ -498,11 +528,11 @@ func (m Migrator) AlterDataTypeOf(stmt *gorm.Statement, field *schema.Field) (ex
 		} else {
 			owner := strings.Trim(parts[0], `"`)
 			table := strings.Trim(parts[1], `"`)
-			m.DB.Raw("SELECT NULLABLE FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", 
-				strings.ToUpper(owner), strings.ToUpper(table), field.DBName).Row().Scan(&nullable)
+			m.DB.Raw("SELECT NULLABLE FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)",
+				strings.ToUpper(owner), strings.ToUpper(table), field.DBName).Row().Scan(&nullable) //nolint:errcheck // Scan 失败时 nullable 保持零值 ""，后续逻辑兼容
 		}
 	} else {
-		m.DB.Raw("SELECT NULLABLE FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", stmt.Table, field.DBName).Row().Scan(&nullable)
+		m.DB.Raw("SELECT NULLABLE FROM USER_TAB_COLUMNS WHERE TABLE_NAME = ? AND UPPER(COLUMN_NAME) = UPPER(?)", stmt.Table, field.DBName).Row().Scan(&nullable) //nolint:errcheck // Scan 失败时 nullable 保持零值 ""，后续逻辑兼容
 	}
 	if field.NotNull && nullable == "Y" {
 		expr.SQL += " NOT NULL"
@@ -525,8 +555,8 @@ func (m Migrator) AlterDataTypeOf(stmt *gorm.Statement, field *schema.Field) (ex
 
 		if field.DefaultValueInterface != nil {
 			defaultStmt := &gorm.Statement{Vars: []any{field.DefaultValueInterface}}
-			m.Dialector.BindVarTo(defaultStmt, defaultStmt, field.DefaultValueInterface)
-			expr.SQL += " DEFAULT " + m.Dialector.Explain(defaultStmt.SQL.String(), field.DefaultValueInterface)
+			m.BindVarTo(defaultStmt, defaultStmt, field.DefaultValueInterface)
+			expr.SQL += " DEFAULT " + m.Explain(defaultStmt.SQL.String(), field.DefaultValueInterface)
 		} else if field.DefaultValue != "(-)" {
 			// 使用 buildOracleDefault 进行智能转换（版本感知：11g 下 NEXTVAL 默认值
 			// 不能生成 DEFAULT 子句，返回空串则跳过，避免拼出非法 SQL）
@@ -565,8 +595,8 @@ func (m Migrator) FullDataTypeOf(field *schema.Field) (expr clause.Expr) {
 
 		if field.DefaultValueInterface != nil {
 			defaultStmt := &gorm.Statement{Vars: []any{field.DefaultValueInterface}}
-			m.Dialector.BindVarTo(defaultStmt, defaultStmt, field.DefaultValueInterface)
-			expr.SQL += " DEFAULT " + m.Dialector.Explain(defaultStmt.SQL.String(), field.DefaultValueInterface)
+			m.BindVarTo(defaultStmt, defaultStmt, field.DefaultValueInterface)
+			expr.SQL += " DEFAULT " + m.Explain(defaultStmt.SQL.String(), field.DefaultValueInterface)
 		} else if field.DefaultValue != "(-)" {
 			// 版本感知：11g 下 NEXTVAL 默认值不能用 DEFAULT 子句（此处非 NEXTVAL
 			// 场景由 buildOracleDefault 正常生成 DEFAULT 子句）
@@ -580,7 +610,7 @@ func (m Migrator) FullDataTypeOf(field *schema.Field) (expr clause.Expr) {
 }
 
 func (m Migrator) CreateConstraint(value any, name string) error {
-	m.TryRemoveOnUpdate(value)
+	_ = m.TryRemoveOnUpdate(value)
 	return m.Migrator.CreateConstraint(value, name)
 }
 
@@ -623,7 +653,7 @@ func (m Migrator) DropIndex(value any, name string) error {
 
 func (m Migrator) HasIndex(value any, name string) bool {
 	var count int64
-	m.RunWithValue(value, func(stmt *gorm.Statement) error {
+	_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		if idx := stmt.Schema.LookIndex(name); idx != nil {
 			name = idx.Name
 		}
@@ -655,13 +685,37 @@ func (m Migrator) RenameIndex(value any, oldName, newName string) error {
 	})
 }
 
+// removeOnUpdateFromConstraint 从 CONSTRAINT 标签值中移除 OnUpdate 子项（大小写不敏感）。
+// GORM 的 ParseTagSetting 只大写化 key、保留值原文（如 "OnUpdate:CASCADE,OnDelete:SET NULL"），
+// 因此不能依赖字符串替换 "ON UPDATE xxx"（该模式永不命中），需按 "," 拆分后逐项判断：
+// key（冒号前部分）与 "OnUpdate" 做 EqualFold 匹配，命中则丢弃该子项，其余子项原样保留。
+func removeOnUpdateFromConstraint(constraintStr string) string {
+	if constraintStr == "" {
+		return ""
+	}
+	parts := strings.Split(constraintStr, ",")
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		key := part
+		if before, _, ok := strings.Cut(part, ":"); ok {
+			key = before
+		}
+		if strings.EqualFold(strings.TrimSpace(key), "OnUpdate") {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	return strings.Join(kept, ",")
+}
+
 func (m Migrator) TryRemoveOnUpdate(values ...any) error {
 	for _, value := range values {
 		if err := m.RunWithValue(value, func(stmt *gorm.Statement) error {
 			for _, rel := range stmt.Schema.Relationships.Relations {
-				constraint := rel.ParseConstraint()
-				if constraint != nil {
-					rel.Field.TagSettings["CONSTRAINT"] = strings.ReplaceAll(rel.Field.TagSettings["CONSTRAINT"], fmt.Sprintf("ON UPDATE %s", constraint.OnUpdate), "")
+				if str, ok := rel.Field.TagSettings["CONSTRAINT"]; ok && str != "" {
+					// 原地清理 TagSettings：建表/建约束 DDL 不再生成
+					// Oracle 不支持的 "ON UPDATE" 子句（ORA-00907）。
+					rel.Field.TagSettings["CONSTRAINT"] = removeOnUpdateFromConstraint(str)
 				}
 			}
 			return nil
@@ -690,8 +744,17 @@ func (m Migrator) CreateOnUpdateTrigger(value any, rel *schema.Relationship) err
 	if rel == nil {
 		return fmt.Errorf("relationship is nil")
 	}
+	return m.createOnUpdateTrigger(value, rel, rel.ParseConstraint())
+}
 
-	constraint := rel.ParseConstraint()
+// createOnUpdateTrigger 是 CreateOnUpdateTrigger 的内部实现。
+// constraint 由调用方在 TryRemoveOnUpdate 清理 TagSettings 之前解析并显式传入，
+// 避免触发器逻辑读到已被移除 OnUpdate 的 CONSTRAINT 标签而永远不会创建。
+func (m Migrator) createOnUpdateTrigger(value any, rel *schema.Relationship, constraint *schema.Constraint) error {
+	if rel == nil {
+		return fmt.Errorf("relationship is nil")
+	}
+
 	if constraint == nil || constraint.OnUpdate == "" {
 		return nil
 	}
@@ -701,9 +764,23 @@ func (m Migrator) CreateOnUpdateTrigger(value any, rel *schema.Relationship) err
 		return nil
 	}
 
+	// 子表外键列：belongs_to 关系下 rel.Field.DBName 为空（关联字段非物理列，
+	// 外键列是子表上的 PARENT_ID 等），必须取 constraint.ForeignKeys。
+	// 否则 validateOracleIdentifier 报 "identifier cannot be empty"，
+	// 触发器永远不会创建（ON UPDATE 级联语义丢失）。
+	var childFKCol string
+	if len(constraint.ForeignKeys) > 0 {
+		childFKCol = constraint.ForeignKeys[0].DBName
+	} else {
+		childFKCol = rel.Field.DBName // 兜底：无外键信息时退回原逻辑
+	}
+	if childFKCol == "" || len(constraint.References) == 0 {
+		return nil
+	}
+
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		// 验证标识符安全性
-		if err := validateOracleIdentifier(rel.Field.DBName); err != nil {
+		if err := validateOracleIdentifier(childFKCol); err != nil {
 			return err
 		}
 		if err := validateOracleIdentifier(stmt.Schema.Table); err != nil {
@@ -718,13 +795,14 @@ func (m Migrator) CreateOnUpdateTrigger(value any, rel *schema.Relationship) err
 
 		triggerName := onUpdateTriggerName(
 			stmt.Schema.Table,
-			rel.Field.DBName,
+			childFKCol,
 			constraint.References[0].DBName,
 		)
 
 		var triggerSQL string
 
-		if constraint.OnUpdate == "CASCADE" {
+		switch constraint.OnUpdate {
+		case "CASCADE":
 			// CASCADE: 当父表更新时，子表相应字段也更新
 			triggerSQL = fmt.Sprintf(`
                 CREATE OR REPLACE TRIGGER %s
@@ -737,12 +815,12 @@ func (m Migrator) CreateOnUpdateTrigger(value any, rel *schema.Relationship) err
 				constraint.References[0].DBName,
 				constraint.ReferenceSchema.Table,
 				stmt.Schema.Table,
-				rel.Field.DBName,
+				childFKCol,
 				constraint.References[0].DBName,
-				rel.Field.DBName,
+				childFKCol,
 				constraint.References[0].DBName,
 			)
-		} else if constraint.OnUpdate == "SET NULL" {
+		case "SET NULL":
 			// SET NULL: 当父表更新时，子表相应字段设为 NULL
 			triggerSQL = fmt.Sprintf(`
                 CREATE OR REPLACE TRIGGER %s
@@ -755,8 +833,8 @@ func (m Migrator) CreateOnUpdateTrigger(value any, rel *schema.Relationship) err
 				constraint.References[0].DBName,
 				constraint.ReferenceSchema.Table,
 				stmt.Schema.Table,
-				rel.Field.DBName,
-				rel.Field.DBName,
+				childFKCol,
+				childFKCol,
 				constraint.References[0].DBName,
 			)
 		}
@@ -801,4 +879,28 @@ EXCEPTION
 		IF SQLCODE != -4080 THEN RAISE; END IF;
 END;`, triggerName)).Error
 	})
+}
+
+// GetTypeAliases 返回字段逻辑类型在 Oracle 数据字典中的别名，用于 MigrateColumn
+// 的类型比对：Oracle 把 INTEGER/SMALLINT 等数值列统一报告为 NUMBER，
+// 覆写默认实现避免 AutoMigrate 反复误判为类型差异而重复 ALTER。
+//
+// MigrateColumn 匹配逻辑（gorm@v1.31.2/migrator/migrator.go:484-493）：
+//
+//	if !strings.HasPrefix(fullDataType, realDataType) {
+//	    aliases := m.DB.Migrator().GetTypeAliases(realDataType)
+//	    for _, alias := range aliases {
+//	        if strings.HasPrefix(fullDataType, alias) { isSameType = true }
+//	    }
+//	}
+//
+// 因此 aliases 应是 DataTypeOf 输出值的前缀（如 "integer"、"smallint"），
+// 而非 Oracle 侧的类型名 "number"。
+func (m Migrator) GetTypeAliases(databaseTypeName string) []string {
+	switch strings.ToLower(databaseTypeName) {
+	case "number":
+		return []string{"integer", "smallint"}
+	default:
+		return nil
+	}
 }

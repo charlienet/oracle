@@ -1,7 +1,6 @@
 package oracle
 
 import (
-	"database/sql"
 	"fmt"
 	"reflect"
 
@@ -30,12 +29,12 @@ func Delete(db *gorm.DB) {
 	// 1. WHERE 安全检查（最重要）
 	if where, ok := stmt.Clauses["WHERE"].Expression.(clause.Where); ok {
 		if checkMissingWhereConditions(where.Exprs, schema) {
-			db.AddError(fmt.Errorf("missing WHERE condition in DELETE"))
+			_ = db.AddError(fmt.Errorf("missing WHERE condition in DELETE"))
 			return
 		}
 	} else {
 		// 没有 WHERE 子句
-		db.AddError(fmt.Errorf("missing WHERE condition in DELETE"))
+		_ = db.AddError(fmt.Errorf("missing WHERE condition in DELETE"))
 		return
 	}
 
@@ -104,10 +103,10 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 
 		// 如果有 RETURNING 子句，添加 INTO 子句
 		if hasDefaultValues {
-			stmt.WriteString(" INTO ")
+			_, _ = stmt.WriteString(" INTO ")
 			for idx, field := range schema.FieldsWithDefaultDBValue {
 				if idx > 0 {
-					stmt.WriteByte(',')
+					_ = stmt.WriteByte(',')
 				}
 				boundVars[field.Name] = len(stmt.Vars)
 				stmt.AddVar(stmt, outParam(field))
@@ -116,39 +115,10 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 	}
 
 	if !db.DryRun {
-		// 执行软删除操作
-		var tx *sql.Tx
-		var err error
-		var isTransaction bool = false
-
-		// 检查是否已经在一个事务中
-		if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
-			tx = sqlTx
-			isTransaction = true
-		} else if starter, ok := stmt.ConnPool.(txBeginner); ok {
-			tx, err = starter.Begin()
-			if err != nil {
-				db.AddError(err)
-				return
-			}
-			defer func() {
-				if db.Error != nil && !isTransaction {
-					_ = tx.Rollback()
-				} else if !isTransaction {
-					if err := tx.Commit(); err != nil {
-						db.AddError(err)
-					}
-				}
-			}()
-		} else {
-			db.AddError(fmt.Errorf("unsupported connection pool type: %T", stmt.ConnPool))
-			return
-		}
-
-		result, err := tx.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
+		// 单语句 UPDATE（软删除）天然原子，直接执行即可
+		result, err := stmt.ConnPool.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
 		if err != nil {
-			db.AddError(err)
-			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
+			_ = db.AddError(err)
 			return
 		}
 
@@ -174,7 +144,7 @@ func performSoftDelete(db *gorm.DB, field *gormSchema.Field, boundVars map[strin
 					switch updateTo.Kind() {
 					case reflect.Struct:
 						if err = field.Set(stmt.Context, updateTo, outDest(stmt.Vars, boundVars[field.Name])); err != nil {
-							db.AddError(err)
+							_ = db.AddError(err)
 						}
 					case reflect.Map:
 						// 设置Map类型的值
@@ -229,10 +199,10 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 
 		// 如果有 RETURNING 子句，添加 INTO 子句
 		if hasDefaultValues {
-			stmt.WriteString(" INTO ")
+			_, _ = stmt.WriteString(" INTO ")
 			for idx, field := range schema.FieldsWithDefaultDBValue {
 				if idx > 0 {
-					stmt.WriteByte(',')
+					_ = stmt.WriteByte(',')
 				}
 				boundVars[field.Name] = len(stmt.Vars)
 				stmt.AddVar(stmt, outParam(field))
@@ -241,39 +211,10 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 	}
 
 	if !db.DryRun {
-		// 执行删除操作
-		var tx *sql.Tx
-		var err error
-		var isTransaction bool = false
-
-		// 检查是否已经在一个事务中
-		if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
-			tx = sqlTx
-			isTransaction = true
-		} else if starter, ok := stmt.ConnPool.(txBeginner); ok {
-			tx, err = starter.Begin()
-			if err != nil {
-				db.AddError(err)
-				return
-			}
-			defer func() {
-				if db.Error != nil && !isTransaction {
-					_ = tx.Rollback()
-				} else if !isTransaction {
-					if err := tx.Commit(); err != nil {
-						db.AddError(err)
-					}
-				}
-			}()
-		} else {
-			db.AddError(fmt.Errorf("unsupported connection pool type: %T", stmt.ConnPool))
-			return
-		}
-
-		result, err := tx.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
+		// 单语句 DELETE 天然原子，直接执行即可
+		result, err := stmt.ConnPool.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...)
 		if err != nil {
-			db.AddError(err)
-			// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
+			_ = db.AddError(err)
 			return
 		}
 
@@ -299,7 +240,7 @@ func performHardDelete(db *gorm.DB, boundVars map[string]int, pkValues int) {
 					switch deleteTo.Kind() {
 					case reflect.Struct:
 						if err = field.Set(stmt.Context, deleteTo, outDest(stmt.Vars, boundVars[field.Name])); err != nil {
-							db.AddError(err)
+							_ = db.AddError(err)
 						}
 					case reflect.Map:
 						// 设置Map类型的值

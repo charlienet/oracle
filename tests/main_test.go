@@ -43,7 +43,7 @@ func TestMain(m *testing.M) {
 
 // cleanup 删除所有测试表（忽略错误，因为表可能不存在）
 func cleanup() {
-	_ = DB.Migrator().DropTable(&User{}, &Product{}, &Order{}, &UserWithHook{}, &SeqDefaultViaDriverModel{}, &BigStringModel{})
+	_ = DB.Migrator().DropTable(&User{}, &Product{}, &Order{}, &UserWithHook{}, &SeqDefaultViaDriverModel{}, &BigStringModel{}, &Merchant{})
 	// TEST_SEQ_DEFAULT 表通过原生 SQL 创建（无 autoIncrement），DropTable 无法识别，
 	// 因此用原生 SQL 清理表与序列
 	DB.Exec("DROP TABLE TEST_SEQ_DEFAULT")

@@ -2,7 +2,6 @@ package oracle
 
 import (
 	"bytes"
-	"database/sql"
 	"fmt"
 	"reflect"
 
@@ -14,10 +13,6 @@ import (
 	"github.com/charlienet/oracle/clauses"
 	"github.com/charlienet/oracle/utils"
 )
-
-type txBeginner interface {
-	Begin() (*sql.Tx, error)
-}
 
 func Create(db *gorm.DB) {
 	stmt := db.Statement
@@ -95,7 +90,7 @@ func Create(db *gorm.DB) {
 			}
 			// 检测是否为批量 MERGE
 			if len(values.Values) > 1 {
-				db.AddError(fmt.Errorf("batch UPSERT (MERGE) is not supported, use single-row Create instead"))
+				_ = db.AddError(fmt.Errorf("batch UPSERT (MERGE) is not supported, use single-row Create instead"))
 				return
 			}
 			
@@ -117,10 +112,10 @@ func Create(db *gorm.DB) {
 			}
 			stmt.Build("INSERT", "VALUES", "RETURNING")
 			if hasDefaultValues {
-				stmt.WriteString(" INTO ")
+				_, _ = stmt.WriteString(" INTO ")
 				for idx, field := range schema.FieldsWithDefaultDBValue {
 					if idx > 0 {
-						stmt.WriteByte(',')
+						_ = stmt.WriteByte(',')
 					}
 					boundVars[field.Name] = len(stmt.Vars)
 					stmt.AddVar(stmt, outParam(field))
@@ -129,60 +124,25 @@ func Create(db *gorm.DB) {
 		}
 
 		if !db.DryRun {
-			// 开启事务以确保批量插入的一致性
-			var tx *sql.Tx
-			var err error
-			var isTransaction bool = false
-
-			// 检查是否已经在一个事务中
-			if sqlTx, ok := stmt.ConnPool.(*sql.Tx); ok {
-				tx = sqlTx
-				isTransaction = true
-			} else if starter, ok := stmt.ConnPool.(txBeginner); ok {
-				tx, err = starter.Begin()
-				if err != nil {
-					db.AddError(err)
-					return
-				}
-				defer func() {
-					if db.Error != nil && !isTransaction {
-						if err := tx.Rollback(); err != nil {
-							db.AddError(err)
-						}
-					} else if !isTransaction {
-						if err := tx.Commit(); err != nil {
-							db.AddError(err)
-						}
-					}
-				}()
-			} else {
-				db.AddError(fmt.Errorf("unsupported connection pool type: %T", stmt.ConnPool))
+			// 获取可直接执行的连接池：不在事务中时包一层自管事务以保持批量原子性
+			//（兼容 PrepareStmt 模式的 *gorm.PreparedStmtDB，见 ensureWriteTx）
+			execPool, finish, err := ensureWriteTx(stmt.Context, stmt.ConnPool, stmt.DB.Logger) //nolint:staticcheck // Logger 仅在 *gorm.DB 上，*gorm.Statement 无此字段
+			if err != nil {
+				_ = db.AddError(err)
 				return
 			}
+			defer finish(db)
 
 			for rowIdx, vals := range values.Values {
-				// HACK HACK: replace values one by one, assuming its value layout will be the same all the time, i.e. aligned
-				// 明确只覆盖 INSERT 列对应的 Vars，不影响 RETURNING INTO 的输出参数
-				insertVarCount := len(values.Columns)
+				// 覆盖 INSERT 列对应的 Vars，不影响 RETURNING INTO 的输出参数
 				for colIdx, val := range vals {
-					if colIdx >= insertVarCount {
-						break // 安全保护：不覆盖 RETURNING INTO 的输出参数
+					if colIdx >= len(values.Columns) {
+						break
 					}
-					switch v := val.(type) {
-					case bool:
-						if v {
-							val = 1
-						} else {
-							val = 0
-						}
-					}
-
 					stmt.Vars[colIdx] = val
 				}
-				// and then we insert each row one by one then put the returning values back (i.e. last return id => smart insert)
-				// we keep track of the index so that the sub-reflected value is also correct
 
-				switch result, err := tx.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...); err {
+				switch result, err := execPool.ExecContext(stmt.Context, stmt.SQL.String(), stmt.Vars...); err {
 				case nil: // success
 					// 批量插入时累加每个单行插入的受影响行数
 					rowsAffected, _ := result.RowsAffected()
@@ -204,7 +164,7 @@ func Create(db *gorm.DB) {
 								switch insertTo.Kind() {
 								case reflect.Struct:
 									if err = field.Set(stmt.Context, insertTo, outDest(stmt.Vars, boundVars[field.Name])); err != nil {
-										db.AddError(err)
+										_ = db.AddError(err)
 									}
 								case reflect.Map:
 									// 设置Map类型的ID值
@@ -222,7 +182,7 @@ func Create(db *gorm.DB) {
 						)
 					}
 				default: // failure
-					db.AddError(err)
+					_ = db.AddError(err)
 					// 事务回滚统一由 defer 处理（db.Error != nil 时执行），避免双重 Rollback
 					return
 				}

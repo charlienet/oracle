@@ -1,6 +1,7 @@
 package oracle
 
 import (
+	"maps"
 	"reflect"
 	"strings"
 	"sync"
@@ -15,8 +16,8 @@ import (
 // gorm 的 schema 是全局缓存且解析后只读，这里在首次查询时一次性给
 // FieldsByDBName 补充大写列名键，之后所有查询只读，无数据竞争。
 var (
-	schemaPatchMu   sync.Mutex
-	schemaPatched   sync.Map // map[*schema.Schema]bool
+	schemaPatchMu sync.Mutex
+	schemaPatched sync.Map // map[*schema.Schema]bool
 )
 
 // patchUpperDBNameKeys 为 schema 的 FieldsByDBName 补充大写列名键。
@@ -30,25 +31,23 @@ func patchUpperDBNameKeys(s *schema.Schema) {
 	if s == nil {
 		return
 	}
-	
+
 	// 检查是否已 patch
 	if _, loaded := schemaPatched.Load(s); loaded {
 		return
 	}
-	
+
 	schemaPatchMu.Lock()
 	defer schemaPatchMu.Unlock()
-	
+
 	// 双重检查
 	if _, loaded := schemaPatched.Load(s); loaded {
 		return
 	}
-	
+
 	// 构建新 map
 	newMap := make(map[string]*schema.Field, len(s.FieldsByDBName)+len(s.Fields))
-	for k, v := range s.FieldsByDBName {
-		newMap[k] = v
-	}
+	maps.Copy(newMap, s.FieldsByDBName)
 	for _, field := range s.Fields {
 		upper := strings.ToUpper(field.DBName)
 		if upper != field.DBName {
@@ -57,10 +56,10 @@ func patchUpperDBNameKeys(s *schema.Schema) {
 			}
 		}
 	}
-	
+
 	// 原子替换引用
 	s.FieldsByDBName = newMap
-	
+
 	// 标记为已 patch
 	schemaPatched.Store(s, true)
 }
@@ -202,7 +201,7 @@ func findSchemaFieldByStructFieldFast(schemaInfo *schema.Schema, structField *re
 	if field, ok := nameToField[structField.Name]; ok {
 		return field
 	}
-	
+
 	// 尝试通过数据库列名查找
 	dbName := structField.Tag.Get("column")
 	if dbName != "" {
@@ -210,19 +209,19 @@ func findSchemaFieldByStructFieldFast(schemaInfo *schema.Schema, structField *re
 			return schemaField
 		}
 	}
-	
+
 	// 尝试使用结构体字段名作为列名查找
 	if schemaField, exists := columnToField[strings.ToUpper(structField.Name)]; exists {
 		return schemaField
 	}
-	
+
 	// 如果以上方法都失败，遍历 schema 字段查找匹配项
 	for _, field := range schemaInfo.Fields {
 		if field.Name == structField.Name || field.DBName == dbName {
 			return field
 		}
 	}
-	
+
 	return nil
 }
 
@@ -282,12 +281,12 @@ func isZeroValue(value any) bool {
 	if value == nil {
 		return true
 	}
-	
+
 	// 特殊处理 time.Time
 	if t, ok := value.(time.Time); ok {
 		return t.IsZero()
 	}
-	
+
 	v := reflect.ValueOf(value)
 	switch v.Kind() {
 	case reflect.String:

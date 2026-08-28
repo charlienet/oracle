@@ -29,17 +29,17 @@ func TestMigratorCurrentDatabase(t *testing.T) {
 // TestMigratorDropColumn 测试删除列
 func TestMigratorDropColumn(t *testing.T) {
 	type DropColumnModel struct {
-		ID     uint   `gorm:"primaryKey"`
-		Name   string `gorm:"size:100"`
-		Age    int
-		Email  string `gorm:"size:200"`
+		ID    uint   `gorm:"primaryKey"`
+		Name  string `gorm:"size:100"`
+		Age   int
+		Email string `gorm:"size:200"`
 	}
 
-	DB.Migrator().DropTable(&DropColumnModel{})
+	_ = DB.Migrator().DropTable(&DropColumnModel{})
 	if err := DB.AutoMigrate(&DropColumnModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&DropColumnModel{})
+	defer func() { _ = DB.Migrator().DropTable(&DropColumnModel{}) }()
 
 	// 验证列存在
 	if !DB.Migrator().HasColumn(&DropColumnModel{}, "Age") {
@@ -64,11 +64,11 @@ func TestMigratorAlterColumn(t *testing.T) {
 		Name string `gorm:"size:50"`
 	}
 
-	DB.Migrator().DropTable(&AlterColumnModel{})
+	_ = DB.Migrator().DropTable(&AlterColumnModel{})
 	if err := DB.AutoMigrate(&AlterColumnModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&AlterColumnModel{})
+	defer func() { _ = DB.Migrator().DropTable(&AlterColumnModel{}) }()
 
 	// 修改列大小
 	type AlterColumnModelNew struct {
@@ -88,11 +88,11 @@ func TestMigratorHasColumn(t *testing.T) {
 		Name string `gorm:"size:100"`
 	}
 
-	DB.Migrator().DropTable(&HasColumnModel{})
+	_ = DB.Migrator().DropTable(&HasColumnModel{})
 	if err := DB.AutoMigrate(&HasColumnModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&HasColumnModel{})
+	defer func() { _ = DB.Migrator().DropTable(&HasColumnModel{}) }()
 
 	if !DB.Migrator().HasColumn(&HasColumnModel{}, "Name") {
 		t.Error("Name column should exist")
@@ -106,7 +106,7 @@ func TestMigratorHasColumn(t *testing.T) {
 // TestMigratorCreateConstraint 测试创建约束
 func TestMigratorCreateConstraint(t *testing.T) {
 	type ParentModel struct {
-		ID   uint `gorm:"primaryKey"`
+		ID uint `gorm:"primaryKey"`
 	}
 
 	type ChildModel struct {
@@ -115,11 +115,11 @@ func TestMigratorCreateConstraint(t *testing.T) {
 		Parent   ParentModel `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	}
 
-	DB.Migrator().DropTable(&ChildModel{}, &ParentModel{})
+	_ = DB.Migrator().DropTable(&ChildModel{}, &ParentModel{})
 	if err := DB.AutoMigrate(&ParentModel{}, &ChildModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&ChildModel{}, &ParentModel{})
+	defer func() { _ = DB.Migrator().DropTable(&ChildModel{}, &ParentModel{}) }()
 
 	// 验证约束存在
 	if !DB.Migrator().HasConstraint(&ChildModel{}, "fk_child_parent") {
@@ -130,7 +130,7 @@ func TestMigratorCreateConstraint(t *testing.T) {
 // TestMigratorDropConstraint 测试删除约束
 func TestMigratorDropConstraint(t *testing.T) {
 	type ParentModel2 struct {
-		ID   uint `gorm:"primaryKey"`
+		ID uint `gorm:"primaryKey"`
 	}
 
 	type ChildModel2 struct {
@@ -139,11 +139,11 @@ func TestMigratorDropConstraint(t *testing.T) {
 		Parent   ParentModel2 `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	}
 
-	DB.Migrator().DropTable(&ChildModel2{}, &ParentModel2{})
+	_ = DB.Migrator().DropTable(&ChildModel2{}, &ParentModel2{})
 	if err := DB.AutoMigrate(&ParentModel2{}, &ChildModel2{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&ChildModel2{}, &ParentModel2{})
+	defer func() { _ = DB.Migrator().DropTable(&ChildModel2{}, &ParentModel2{}) }()
 
 	// 尝试删除约束（可能不存在，忽略错误）
 	_ = DB.Migrator().DropConstraint(&ChildModel2{}, "fk_child_model2_parent")
@@ -152,7 +152,7 @@ func TestMigratorDropConstraint(t *testing.T) {
 // TestMigratorHasConstraint 测试检查约束是否存在
 func TestMigratorHasConstraint(t *testing.T) {
 	type ParentModel3 struct {
-		ID   uint `gorm:"primaryKey"`
+		ID uint `gorm:"primaryKey"`
 	}
 
 	type ChildModel3 struct {
@@ -161,11 +161,11 @@ func TestMigratorHasConstraint(t *testing.T) {
 		Parent   ParentModel3 `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	}
 
-	DB.Migrator().DropTable(&ChildModel3{}, &ParentModel3{})
+	_ = DB.Migrator().DropTable(&ChildModel3{}, &ParentModel3{})
 	if err := DB.AutoMigrate(&ParentModel3{}, &ChildModel3{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&ChildModel3{}, &ParentModel3{})
+	defer func() { _ = DB.Migrator().DropTable(&ChildModel3{}, &ParentModel3{}) }()
 
 	// 检查约束（名称可能不同）
 	exists := DB.Migrator().HasConstraint(&ChildModel3{}, "fk_child_model3_parent")
@@ -179,11 +179,11 @@ func TestMigratorDropIndex(t *testing.T) {
 		Email string `gorm:"index:idx_email"`
 	}
 
-	DB.Migrator().DropTable(&IndexModel{})
+	_ = DB.Migrator().DropTable(&IndexModel{})
 	if err := DB.AutoMigrate(&IndexModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&IndexModel{})
+	defer func() { _ = DB.Migrator().DropTable(&IndexModel{}) }()
 
 	// 验证索引存在
 	if !DB.Migrator().HasIndex(&IndexModel{}, "idx_email") {
@@ -208,11 +208,11 @@ func TestMigratorRenameIndex(t *testing.T) {
 		Email string `gorm:"index:idx_old"`
 	}
 
-	DB.Migrator().DropTable(&RenameIndexModel{})
+	_ = DB.Migrator().DropTable(&RenameIndexModel{})
 	if err := DB.AutoMigrate(&RenameIndexModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&RenameIndexModel{})
+	defer func() { _ = DB.Migrator().DropTable(&RenameIndexModel{}) }()
 
 	// 重命名索引
 	if err := DB.Migrator().RenameIndex(&RenameIndexModel{}, "idx_old", "idx_new"); err != nil {
@@ -234,11 +234,11 @@ func TestOracleSavePoint(t *testing.T) {
 		Name string `gorm:"size:100"`
 	}
 
-	DB.Migrator().DropTable(&SavePointModel{})
+	_ = DB.Migrator().DropTable(&SavePointModel{})
 	if err := DB.AutoMigrate(&SavePointModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&SavePointModel{})
+	defer func() { _ = DB.Migrator().DropTable(&SavePointModel{}) }()
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		// 创建记录
@@ -283,14 +283,14 @@ func TestOracleRewriteLimit(t *testing.T) {
 		Name string `gorm:"size:100"`
 	}
 
-	DB.Migrator().DropTable(&LimitModel{})
+	_ = DB.Migrator().DropTable(&LimitModel{})
 	if err := DB.AutoMigrate(&LimitModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&LimitModel{})
+	defer func() { _ = DB.Migrator().DropTable(&LimitModel{}) }()
 
 	// 创建测试数据
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		DB.Create(&LimitModel{Name: "Item"})
 	}
 
@@ -323,11 +323,11 @@ func TestQueryOrderBy(t *testing.T) {
 		Age  int
 	}
 
-	DB.Migrator().DropTable(&OrderByModel{})
+	_ = DB.Migrator().DropTable(&OrderByModel{})
 	if err := DB.AutoMigrate(&OrderByModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&OrderByModel{})
+	defer func() { _ = DB.Migrator().DropTable(&OrderByModel{}) }()
 
 	// 创建测试数据
 	DB.Create(&OrderByModel{Name: "Alice", Age: 30})
@@ -364,11 +364,11 @@ func TestQueryGroupBy(t *testing.T) {
 		Value    int
 	}
 
-	DB.Migrator().DropTable(&GroupModel{})
+	_ = DB.Migrator().DropTable(&GroupModel{})
 	if err := DB.AutoMigrate(&GroupModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&GroupModel{})
+	defer func() { _ = DB.Migrator().DropTable(&GroupModel{}) }()
 
 	// 创建测试数据
 	DB.Create(&GroupModel{Category: "A", Value: 10})
@@ -396,11 +396,11 @@ func TestQueryDistinct(t *testing.T) {
 		Name string `gorm:"size:100"`
 	}
 
-	DB.Migrator().DropTable(&DistinctModel{})
+	_ = DB.Migrator().DropTable(&DistinctModel{})
 	if err := DB.AutoMigrate(&DistinctModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&DistinctModel{})
+	defer func() { _ = DB.Migrator().DropTable(&DistinctModel{}) }()
 
 	// 创建重复数据
 	DB.Create(&DistinctModel{Name: "Alice"})
@@ -427,18 +427,18 @@ func TestUpdateWithMap(t *testing.T) {
 		Age  int
 	}
 
-	DB.Migrator().DropTable(&MapUpdateModel{})
+	_ = DB.Migrator().DropTable(&MapUpdateModel{})
 	if err := DB.AutoMigrate(&MapUpdateModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&MapUpdateModel{})
+	defer func() { _ = DB.Migrator().DropTable(&MapUpdateModel{}) }()
 
 	// 创建记录
 	model := MapUpdateModel{Name: "Original", Age: 20}
 	DB.Create(&model)
 
 	// 使用 map 更新
-	if err := DB.Model(&model).Updates(map[string]interface{}{
+	if err := DB.Model(&model).Updates(map[string]any{
 		"name": "Updated",
 		"age":  30,
 	}).Error; err != nil {
@@ -461,11 +461,11 @@ func TestUpdateWithStruct(t *testing.T) {
 		Age  int
 	}
 
-	DB.Migrator().DropTable(&StructUpdateModel{})
+	_ = DB.Migrator().DropTable(&StructUpdateModel{})
 	if err := DB.AutoMigrate(&StructUpdateModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&StructUpdateModel{})
+	defer func() { _ = DB.Migrator().DropTable(&StructUpdateModel{}) }()
 
 	// 创建记录
 	model := StructUpdateModel{Name: "Original", Age: 20}
@@ -493,18 +493,18 @@ func TestUpdateColumns(t *testing.T) {
 		Email string `gorm:"size:200"`
 	}
 
-	DB.Migrator().DropTable(&ColumnsUpdateModel{})
+	_ = DB.Migrator().DropTable(&ColumnsUpdateModel{})
 	if err := DB.AutoMigrate(&ColumnsUpdateModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&ColumnsUpdateModel{})
+	defer func() { _ = DB.Migrator().DropTable(&ColumnsUpdateModel{}) }()
 
 	// 创建记录
 	model := ColumnsUpdateModel{Name: "Original", Age: 20, Email: "old@example.com"}
 	DB.Create(&model)
 
 	// 只更新指定列
-	if err := DB.Model(&model).Select("name", "age").Updates(map[string]interface{}{
+	if err := DB.Model(&model).Select("name", "age").Updates(map[string]any{
 		"name":  "Updated",
 		"age":   30,
 		"email": "new@example.com",
@@ -532,17 +532,17 @@ func TestDeleteBatch(t *testing.T) {
 		Category string `gorm:"size:50"`
 	}
 
-	DB.Migrator().DropTable(&BatchDeleteModel{})
+	_ = DB.Migrator().DropTable(&BatchDeleteModel{})
 	if err := DB.AutoMigrate(&BatchDeleteModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&BatchDeleteModel{})
+	defer func() { _ = DB.Migrator().DropTable(&BatchDeleteModel{}) }()
 
 	// 创建测试数据
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		DB.Create(&BatchDeleteModel{Category: "A"})
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		DB.Create(&BatchDeleteModel{Category: "B"})
 	}
 
@@ -572,11 +572,11 @@ func TestDeleteWithConditions(t *testing.T) {
 		Age  int
 	}
 
-	DB.Migrator().DropTable(&ConditionDeleteModel{})
+	_ = DB.Migrator().DropTable(&ConditionDeleteModel{})
 	if err := DB.AutoMigrate(&ConditionDeleteModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&ConditionDeleteModel{})
+	defer func() { _ = DB.Migrator().DropTable(&ConditionDeleteModel{}) }()
 
 	// 创建测试数据
 	DB.Create(&ConditionDeleteModel{Name: "Alice", Age: 25})
@@ -606,14 +606,14 @@ func TestCreateWithMap(t *testing.T) {
 		Age  int
 	}
 
-	DB.Migrator().DropTable(&MapCreateModel{})
+	_ = DB.Migrator().DropTable(&MapCreateModel{})
 	if err := DB.AutoMigrate(&MapCreateModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&MapCreateModel{})
+	defer func() { _ = DB.Migrator().DropTable(&MapCreateModel{}) }()
 
 	// 使用 map 创建
-	data := map[string]interface{}{
+	data := map[string]any{
 		"name": "Test",
 		"age":  25,
 	}
@@ -636,11 +636,11 @@ func TestCreateInBatches(t *testing.T) {
 		Name string `gorm:"size:100"`
 	}
 
-	DB.Migrator().DropTable(&BatchCreateModel{})
+	_ = DB.Migrator().DropTable(&BatchCreateModel{})
 	if err := DB.AutoMigrate(&BatchCreateModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&BatchCreateModel{})
+	defer func() { _ = DB.Migrator().DropTable(&BatchCreateModel{}) }()
 
 	// 批量创建
 	records := make([]BatchCreateModel, 100)
@@ -669,11 +669,11 @@ func TestCreateWithOmit(t *testing.T) {
 		Age   int
 	}
 
-	DB.Migrator().DropTable(&OmitCreateModel{})
+	_ = DB.Migrator().DropTable(&OmitCreateModel{})
 	if err := DB.AutoMigrate(&OmitCreateModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&OmitCreateModel{})
+	defer func() { _ = DB.Migrator().DropTable(&OmitCreateModel{}) }()
 
 	// 创建时忽略某些字段
 	model := OmitCreateModel{Name: "Test", Email: "test@example.com", Age: 25}
@@ -704,11 +704,11 @@ func TestTransaction(t *testing.T) {
 		Name string `gorm:"size:100"`
 	}
 
-	DB.Migrator().DropTable(&TransactionModel{})
+	_ = DB.Migrator().DropTable(&TransactionModel{})
 	if err := DB.AutoMigrate(&TransactionModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&TransactionModel{})
+	defer func() { _ = DB.Migrator().DropTable(&TransactionModel{}) }()
 
 	// 测试事务提交
 	err := DB.Transaction(func(tx *gorm.DB) error {
@@ -756,11 +756,11 @@ func TestOnConflictDoNothing(t *testing.T) {
 		Name string `gorm:"size:100"`
 	}
 
-	DB.Migrator().DropTable(&DoNothingModel{})
+	_ = DB.Migrator().DropTable(&DoNothingModel{})
 	if err := DB.AutoMigrate(&DoNothingModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&DoNothingModel{})
+	defer func() { _ = DB.Migrator().DropTable(&DoNothingModel{}) }()
 
 	// 创建初始记录
 	model := DoNothingModel{ID: 1, Name: "Original"}
@@ -791,11 +791,11 @@ func TestSoftDeleteRecover(t *testing.T) {
 		DeletedAt gorm.DeletedAt `gorm:"index"`
 	}
 
-	DB.Migrator().DropTable(&RecoverModel{})
+	_ = DB.Migrator().DropTable(&RecoverModel{})
 	if err := DB.AutoMigrate(&RecoverModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&RecoverModel{})
+	defer func() { _ = DB.Migrator().DropTable(&RecoverModel{}) }()
 
 	// 创建并软删除
 	model := RecoverModel{Name: "Test"}
@@ -826,24 +826,28 @@ func TestSoftDeleteRecover(t *testing.T) {
 // TestTimestampAutoUpdate 测试时间戳自动更新
 func TestTimestampAutoUpdate(t *testing.T) {
 	type TimestampModel struct {
-		ID        uint      `gorm:"primaryKey"`
-		Name      string    `gorm:"size:100"`
+		ID        uint   `gorm:"primaryKey"`
+		Name      string `gorm:"size:100"`
 		CreatedAt time.Time
 		UpdatedAt time.Time
 	}
 
-	DB.Migrator().DropTable(&TimestampModel{})
+	_ = DB.Migrator().DropTable(&TimestampModel{})
 	if err := DB.AutoMigrate(&TimestampModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&TimestampModel{})
+	defer func() { _ = DB.Migrator().DropTable(&TimestampModel{}) }()
 
 	// 创建记录
 	model := TimestampModel{Name: "Test"}
 	DB.Create(&model)
 
-	originalCreatedAt := model.CreatedAt
-	originalUpdatedAt := model.UpdatedAt
+	// 从 DB 重新读取，作为基准（解决 Go 纳秒精度 vs Oracle 毫秒精度问题）
+	var baseline TimestampModel
+	DB.First(&baseline, model.ID)
+
+	originalCreatedAt := baseline.CreatedAt
+	originalUpdatedAt := baseline.UpdatedAt
 
 	// 等待一秒确保时间戳不同
 	time.Sleep(1 * time.Second)
@@ -856,7 +860,7 @@ func TestTimestampAutoUpdate(t *testing.T) {
 	DB.First(&updated, model.ID)
 
 	if !updated.CreatedAt.Equal(originalCreatedAt) {
-		t.Error("created_at should not change")
+		t.Errorf("created_at should not change, got %v, want %v", updated.CreatedAt, originalCreatedAt)
 	}
 	if updated.UpdatedAt.Equal(originalUpdatedAt) {
 		t.Error("updated_at should change")

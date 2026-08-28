@@ -6,12 +6,13 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/callbacks"
 	"gorm.io/gorm/clause"
 )
 
 // createTestModel 含主键、普通字段与默认值字段，用于 Create 回调 SQL 生成测试
 type createTestModel struct {
-	ID   uint   `gorm:"primaryKey"`
+	ID   uint `gorm:"primaryKey"`
 	Name string
 	Code string `gorm:"default:ABC"`
 }
@@ -32,7 +33,12 @@ func newTestDB(t *testing.T, model any) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	db.Config.Dialector = d
+	// noopDialector.Initialize 为 no-op，未注册默认回调（与真实 gorm.Open +
+	// dialector.Initialize 流程不一致）。这里补齐默认回调注册，保证依赖
+	// callbacks 的能力可用（如 map 子查询更新时 AddVar 内部执行的
+	// subdb.callbacks.Query().Execute(subdb) 构建子查询 SQL）。
+	callbacks.RegisterDefaultCallbacks(db, &callbacks.Config{})
+	db.Dialector = d
 
 	sch := parseTestSchema(t, model)
 
@@ -48,7 +54,7 @@ func newTestDB(t *testing.T, model any) *gorm.DB {
 		Dest:         model,
 		ReflectValue: rv,
 		Clauses:      map[string]clause.Clause{},
-		Vars:         []interface{}{},
+		Vars:         []any{},
 	}
 	return db
 }
@@ -117,5 +123,128 @@ func TestCreateBatchMERGEError(t *testing.T) {
 	}
 	if !strings.Contains(db.Error.Error(), "batch UPSERT") {
 		t.Errorf("error %q does not contain %q", db.Error.Error(), "batch UPSERT")
+	}
+}
+
+// createTestModelDefault 含默认值字段，用于测试 RETURNING INTO 绑定路径
+type createTestModelDefault struct {
+	ID   uint   `gorm:"primaryKey"`
+	Name string `gorm:"default:hello"`
+	Code string `gorm:"default:ABC"`
+}
+
+func TestCreateWithDefaultValues(t *testing.T) {
+	// 模型含 FieldsWithDefaultDBValue 字段：应生成 RETURNING ... INTO
+	model := &createTestModelDefault{Name: "alice"}
+	db := newTestDB(t, model)
+
+	Create(db)
+
+	if db.Error != nil {
+		t.Fatalf("Create returned error: %v", db.Error)
+	}
+
+	sql := db.Statement.SQL.String()
+	for _, want := range []string{"INSERT INTO", "VALUES", "RETURNING", "INTO"} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("Create SQL %q missing %q", sql, want)
+		}
+	}
+}
+
+func TestCreateBatchSlice(t *testing.T) {
+	// 批量插入：slice 输入应生成多行 VALUES
+	batch := &[]createTestModel{{ID: 1, Name: "a"}, {ID: 2, Name: "b"}}
+	db := newTestDB(t, batch)
+
+	Create(db)
+
+	if db.Error != nil {
+		t.Fatalf("Create returned error: %v", db.Error)
+	}
+
+	sql := db.Statement.SQL.String()
+	if !strings.Contains(sql, "INSERT INTO") {
+		t.Errorf("batch Create SQL %q missing INSERT INTO", sql)
+	}
+	if !strings.Contains(sql, "VALUES") {
+		t.Errorf("batch Create SQL %q missing VALUES", sql)
+	}
+}
+
+func TestCreateNilStatement(t *testing.T) {
+	db := &gorm.DB{Statement: &gorm.Statement{}}
+	db.Statement.Schema = nil
+	Create(db)
+	// 不应 panic
+}
+
+func TestCreateNilSchema(t *testing.T) {
+	db := &gorm.DB{Statement: &gorm.Statement{}}
+	Create(db)
+	// 不应 panic
+}
+
+func TestCreateExistingSQL(t *testing.T) {
+	// 如果 stmt.SQL 已有内容，应跳过 SQL 构建
+	model := &createTestModel{Name: "alice"}
+	db := newTestDB(t, model)
+	db.Statement.SQL.WriteString("PRESET SQL")
+
+	Create(db)
+
+	sql := db.Statement.SQL.String()
+	if sql != "PRESET SQL" {
+		t.Errorf("Create should preserve existing SQL, got %q", sql)
+	}
+}
+
+func TestCreateOnConflictDoNothing(t *testing.T) {
+	// ON CONFLICT 无 DoUpdates：MERGE 不应包含 WHEN MATCHED
+	model := &createTestModel{ID: 1, Name: "alice"}
+	db := newTestDB(t, model)
+	db.Statement.AddClause(clause.OnConflict{
+		DoNothing: true,
+	})
+
+	Create(db)
+
+	if db.Error != nil {
+		t.Fatalf("Create returned error: %v", db.Error)
+	}
+
+	sql := db.Statement.SQL.String()
+	if strings.Contains(sql, "WHEN MATCHED") {
+		t.Errorf("MERGE SQL %q should not contain WHEN MATCHED for DoNothing", sql)
+	}
+	if !strings.Contains(sql, "MERGE INTO") {
+		t.Errorf("Create SQL %q missing MERGE INTO", sql)
+	}
+}
+
+func TestCreateOnConflictWithPKFiltering(t *testing.T) {
+	// ON CONFLICT DoUpdates 包含主键列：应被过滤掉
+	model := &createTestModel{ID: 1, Name: "alice", Code: "XYZ"}
+	db := newTestDB(t, model)
+	db.Statement.AddClause(clause.OnConflict{
+		DoUpdates: clause.AssignmentColumns([]string{"id", "name", "code"}),
+	})
+
+	Create(db)
+
+	if db.Error != nil {
+		t.Fatalf("Create returned error: %v", db.Error)
+	}
+
+	sql := db.Statement.SQL.String()
+	// WHEN MATCHED SET 不应包含主键列
+	if strings.Contains(sql, `"ID"`) && strings.Contains(sql, "WHEN MATCHED SET") {
+		// 检查 SET 子句中是否包含 ID
+		if idx := strings.Index(sql, "WHEN MATCHED"); idx != -1 {
+			matched := sql[idx:]
+			if strings.Contains(matched, `"ID" =`) || strings.Contains(matched, `"id" =`) {
+				t.Error("WHEN MATCHED SET should not update primary key column")
+			}
+		}
 	}
 }

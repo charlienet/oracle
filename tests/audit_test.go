@@ -163,11 +163,11 @@ func TestAutoMigrateLongTableName(t *testing.T) {
 
 func TestSoftDeleteUsesNowFunc(t *testing.T) {
 	dropTableNative(t, "TEST_MERCHANT_BLACK")
-	DB.Migrator().DropTable(&MerchantBlackMock{})
+	_ = DB.Migrator().DropTable(&MerchantBlackMock{})
 	if err := DB.AutoMigrate(&MerchantBlackMock{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&MerchantBlackMock{})
+	defer func() { _ = DB.Migrator().DropTable(&MerchantBlackMock{}) }()
 
 	fixed := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 	orig := DB.NowFunc
@@ -261,7 +261,7 @@ func (CustomSoftDeleteModel) TableName() string { return "TEST_AUDIT_CUSTOM_SD" 
 
 func TestSoftDeleteCustomFieldName(t *testing.T) {
 	dropTableNative(t, "TEST_AUDIT_CUSTOM_SD")
-	DB.Migrator().DropTable(&CustomSoftDeleteModel{})
+	_ = DB.Migrator().DropTable(&CustomSoftDeleteModel{})
 	dropSequencesLike(t, "SEQ_TEST_AUDIT_CUSTOM_SD%")
 	if err := DB.AutoMigrate(&CustomSoftDeleteModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)

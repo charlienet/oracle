@@ -38,7 +38,7 @@ func setupSeqMultiTable(t *testing.T) {
 	t.Helper()
 	DB.Exec("DROP SEQUENCE SEQ_TEST_SEQ_MULTI_CODE")
 	DB.Exec("DROP SEQUENCE SEQ_TEST_SEQ_MULTI")
-	DB.Migrator().DropTable(&SeqMultiDefaultModel{})
+	_ = DB.Migrator().DropTable(&SeqMultiDefaultModel{})
 
 	if err := DB.Exec("CREATE SEQUENCE SEQ_TEST_SEQ_MULTI START WITH 100 INCREMENT BY 1 NOCACHE").Error; err != nil {
 		t.Fatalf("failed to create sequence: %v", err)
@@ -96,11 +96,11 @@ func (BlackListModel) TableName() string {
 // TestCreateInBatchesWithOmit 模拟应用真实调用：
 // tx.Omit("BlackID").CreateInBatches(records, batchSize)
 func TestCreateInBatchesWithOmit(t *testing.T) {
-	DB.Migrator().DropTable(&BlackListModel{})
+	_ = DB.Migrator().DropTable(&BlackListModel{})
 	if err := DB.AutoMigrate(&BlackListModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&BlackListModel{})
+	defer func() { _ = DB.Migrator().DropTable(&BlackListModel{}) }()
 	clearTable(t, "TEST_BLACK_LIST")
 
 	// 11 条记录，batchSize=3，跨 4 批；BlackID 赋非零值但被 Omit
@@ -367,11 +367,11 @@ func (MerchantBlackMock) TableName() string {
 // 软删除 UPDATE ... RETURNING id INTO :out 因多行受影响触发
 // "more than one row affected with return clause"。
 func TestSoftDeleteMultiRowReturning(t *testing.T) {
-	DB.Migrator().DropTable(&MerchantBlackMock{})
+	_ = DB.Migrator().DropTable(&MerchantBlackMock{})
 	if err := DB.AutoMigrate(&MerchantBlackMock{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&MerchantBlackMock{})
+	defer func() { _ = DB.Migrator().DropTable(&MerchantBlackMock{}) }()
 
 	// 插入 3 行相同 BLACK_TYPE
 	items := []MerchantBlackMock{
@@ -437,11 +437,11 @@ func (MerchantBlackHardMock) TableName() string {
 // TestHardDeleteMultiRowReturning 重现：硬删除按非主键条件匹配多行，
 // DELETE ... RETURNING id INTO :out 因多行受影响触发报错。
 func TestHardDeleteMultiRowReturning(t *testing.T) {
-	DB.Migrator().DropTable(&MerchantBlackHardMock{})
+	_ = DB.Migrator().DropTable(&MerchantBlackHardMock{})
 	if err := DB.AutoMigrate(&MerchantBlackHardMock{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	defer DB.Migrator().DropTable(&MerchantBlackHardMock{})
+	defer func() { _ = DB.Migrator().DropTable(&MerchantBlackHardMock{}) }()
 
 	items := []MerchantBlackHardMock{
 		{BlackID: 1, BlackType: "M", Reference: "R1"},
@@ -504,7 +504,7 @@ func TestCreateBatchMultiReturning(t *testing.T) {
 func setupSeqBatchTable(t *testing.T) {
 	t.Helper()
 	DB.Exec("DROP SEQUENCE SEQ_TEST_SEQ_BATCH")
-	DB.Migrator().DropTable(&SeqBatchModel{})
+	_ = DB.Migrator().DropTable(&SeqBatchModel{})
 
 	if err := DB.Exec("CREATE SEQUENCE SEQ_TEST_SEQ_BATCH START WITH 100 INCREMENT BY 1 NOCACHE").Error; err != nil {
 		t.Fatalf("failed to create sequence: %v", err)

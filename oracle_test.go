@@ -251,15 +251,15 @@ func TestDataTypeOf(t *testing.T) {
 	}
 }
 
-func TestDataTypeOfRemovesRestrictTag(t *testing.T) {
+func TestDataTypeOfDoesNotMutateTagSettings(t *testing.T) {
 	d := newTestDialector("12.1.0.2.0", 1024)
 	f := testField(schema.Int)
 	f.TagSettings["RESTRICT"] = "true"
 
 	d.DataTypeOf(f)
 
-	if _, ok := f.TagSettings["RESTRICT"]; ok {
-		t.Error("expected RESTRICT to be removed from TagSettings")
+	if _, ok := f.TagSettings["RESTRICT"]; !ok {
+		t.Error("expected RESTRICT to remain in TagSettings (no longer removed)")
 	}
 }
 
@@ -479,8 +479,12 @@ func TestRewriteLimit11(t *testing.T) {
 		d.RewriteLimit11(limitClause(10, 0), stmt)
 		got := stmt.SQL.String()
 
-		if !strings.Contains(got, "ROW_NUM > 11") {
-			t.Errorf("RewriteLimit11 output %q missing ROW_NUM > 11", got)
+		// Offset(10) 应跳过前 10 行，返回第 11 行起（ROW_NUM > 10）
+		if !strings.Contains(got, "ROW_NUM > 10") {
+			t.Errorf("RewriteLimit11 output %q missing ROW_NUM > 10", got)
+		}
+		if strings.Contains(got, "ROW_NUM > 11") {
+			t.Errorf("RewriteLimit11 output %q wrongly contains ROW_NUM > 11 (off-by-one)", got)
 		}
 	})
 
@@ -652,8 +656,8 @@ func TestDefaultValueOf(t *testing.T) {
 	if !ok {
 		t.Fatalf("DefaultValueOf() returned %T, want clause.Expr", expr)
 	}
-	if e.SQL != "VALUES (DEFAULT)" {
-		t.Errorf("DefaultValueOf() = %q, want %q", e.SQL, "VALUES (DEFAULT)")
+	if e.SQL != "DEFAULT" {
+		t.Errorf("DefaultValueOf() = %q, want %q", e.SQL, "DEFAULT")
 	}
 }
 
@@ -691,7 +695,7 @@ func TestOpen(t *testing.T) {
 	if !ok {
 		t.Fatalf("Open() returned %T, want *Dialector", dl)
 	}
-	if d.Config == nil || d.Config.DSN != dsn {
+	if d.Config == nil || d.Config.DSN != dsn { //nolint:staticcheck // Config 为 nil 时不能省略 .Config 访问
 		t.Errorf("Open() did not store DSN, got %+v", d.Config)
 	}
 }

@@ -1,6 +1,6 @@
 .idea
 vendor/
-go.sum
+*.out
 CHANGELOG.md
 /test_local/
 /go.work*

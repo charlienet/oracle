@@ -183,7 +183,7 @@ func TestGoOraOpen(t *testing.T) {
 	if db == nil {
 		t.Fatal("Open() 返回 db == nil")
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 }
 
 // TestGoOraPing 验证对未连接数据库的 Ping 返回错误而非 panic
@@ -194,7 +194,7 @@ func TestGoOraPing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() 返回错误: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -230,7 +230,7 @@ func TestGoOraGetConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() 返回错误: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	raw, err := a.GetConnection(db)
 	if err != nil {
