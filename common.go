@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/hex"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -214,6 +215,7 @@ func convertValue(value any, field *schema.Field) any {
 }
 
 // convertFromOracleToField 将 Oracle 返回值转换为 Go 类型
+// 处理 Oracle 特有的类型转换，包括 LOB 类型（CLOB/BLOB）
 func convertFromOracleToField(value any, field *schema.Field) any {
 	if value == nil {
 		return value
@@ -245,6 +247,59 @@ func convertFromOracleToField(value any, field *schema.Field) any {
 			return v.String
 		}
 		return nil
+	case go_ora.Clob:
+		// go-ora 对 CLOB 列返回 go_ora.Clob 类型，需要解包为 string
+		// 这样 GORM 的 serializer（如 json/gob）才能正确处理
+		if v.Valid {
+			return v.String
+		}
+		return nil
+	case go_ora.Blob:
+		// go-ora 对 BLOB 列返回 go_ora.Blob 类型，需要解包为 []byte
+		// 这样 GORM 的 serializer（如 gob）才能正确处理
+		if v.Valid {
+			return v.Data
+		}
+		return nil
+	case *go_ora.Clob:
+		// 处理指针类型的 Clob
+		if v != nil && v.Valid {
+			return v.String
+		}
+		return nil
+	case *go_ora.Blob:
+		// 处理指针类型的 Blob
+		if v != nil && v.Valid {
+			return v.Data
+		}
+		return nil
+	case string:
+		// 如果字段期望 []byte 类型，尝试将 string 转换为 []byte
+		// 这支持了多种场景：
+		// 1. 字段类型是 schema.Bytes（如 BLOB 列）
+		// 2. 字段的实际 Go 类型是 []byte（如使用 serializer:gob 的字段）
+		// 3. go-ora 将 BLOB 数据作为十六进制编码字符串返回
+		if field != nil {
+			// 检查字段类型是否是 Bytes
+			isBytesField := field.DataType == schema.Bytes
+
+			// 检查字段的实际 Go 类型是否是 []byte
+			if !isBytesField && field.FieldType != nil {
+				isBytesField = field.FieldType.Kind() == reflect.Slice &&
+					field.FieldType.Elem().Kind() == reflect.Uint8
+			}
+
+			if isBytesField {
+				// 优先尝试 hex 解码（go-ora 可能返回十六进制编码的字符串）
+				if decoded, err := hex.DecodeString(v); err == nil {
+					return decoded
+				}
+				// 如果 hex 解码失败，直接转换为 []byte
+				// 这适用于直接存储的二进制数据
+				return []byte(v)
+			}
+		}
+		return value
 	default:
 		return value
 	}

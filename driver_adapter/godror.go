@@ -1,5 +1,7 @@
 //go:build godror
 
+// 本文件为 godror 驱动的预留实现（路线图项）：当前生产链路未接线启用，
+// 仅 go-ora 受支持。启用前需在 Initialize 中接线驱动路径并引入 godror 依赖。
 package driver_adapter
 
 import (

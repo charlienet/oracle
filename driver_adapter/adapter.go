@@ -1,5 +1,6 @@
-// Package driver_adapter 提供 Oracle 驱动抽象层
-// 支持 go-ora 和 godror 两种底层驱动的切换
+// Package driver_adapter 提供 Oracle 驱动抽象层。
+// 当前生产链路仅支持 go-ora；godror 实现（godror.go，受 build tag godror 约束）
+// 为预留代码，尚未接线启用，属于路线图项。
 package driver_adapter
 
 import (
@@ -14,7 +15,7 @@ type DriverType string
 const (
 	// DriverGoOra 使用纯 Go 实现的 go-ora 驱动
 	DriverGoOra DriverType = "go-ora"
-	// DriverGodror 使用基于 ODPI-C 的 godror 驱动
+	// DriverGodror 使用基于 ODPI-C 的 godror 驱动（预留，未接线；当前仅支持 go-ora）
 	DriverGodror DriverType = "godror"
 )
 
@@ -78,12 +79,12 @@ type Adapter interface {
 
 	// NeedsSizeForOut 返回输出参数是否需要指定 Size
 	// go-ora 对字符串类型的 Out 参数需要指定 Size
-	// godror 通常不需要
+	// godror（预留）通常不需要
 	NeedsSizeForOut() bool
 
 	// SupportsReturningMultiRow 返回是否支持多行 RETURNING
 	// go-ora 不支持批量 INSERT + RETURNING
-	// godror 支持
+	// godror（预留）支持
 	SupportsReturningMultiRow() bool
 
 	// SupportsBulkCopy 返回是否支持 BulkCopy

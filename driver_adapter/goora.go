@@ -1,5 +1,5 @@
 // Package driver_adapter 提供 Oracle 驱动抽象层
-// 支持 go-ora 和 godror 两种底层驱动的切换
+// 当前仅支持 go-ora；godror 为路线图项（预留实现见 godror.go，未接线）
 package driver_adapter
 
 import (

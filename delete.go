@@ -26,6 +26,20 @@ func Delete(db *gorm.DB) {
 	// 注入主键 WHERE 条件（GORM 默认回调会做这一步）
 	pkValues := addPrimaryKeyWhere(stmt, schema)
 
+	// P1-6: 处理 Dest != Model 的情况
+	// 参考 GORM 官方 callbacks/delete.go:139-146 的实现
+	// 当 Dest != Model 时，需要从 Model 中提取主键值并添加额外的 WHERE 条件
+	if stmt.ReflectValue.CanAddr() && stmt.Dest != stmt.Model && stmt.Model != nil {
+		_, queryValues := gormSchema.GetIdentityFieldValuesMap(stmt.Context, reflect.ValueOf(stmt.Model), schema.PrimaryFields)
+		column, values := gormSchema.ToQueryValues(stmt.Table, schema.PrimaryFieldDBNames, queryValues)
+
+		if len(values) > 0 {
+			stmt.AddClause(clause.Where{Exprs: []clause.Expression{
+				clause.IN{Column: column, Values: values},
+			}})
+		}
+	}
+
 	// 1. WHERE 安全检查（最重要）
 	if where, ok := stmt.Clauses["WHERE"].Expression.(clause.Where); ok {
 		if checkMissingWhereConditions(where.Exprs, schema) {
@@ -47,8 +61,8 @@ func Delete(db *gorm.DB) {
 			break
 		}
 		// 兼容旧逻辑：按字段名判定（但要求类型必须是 time 相关）
-		if (field.Name == "DeletedAt" || field.DBName == "deleted_at") && 
-		   (field.DataType == gormSchema.Time || field.GORMDataType == gormSchema.Time) {
+		if (field.Name == "DeletedAt" || field.DBName == "deleted_at") &&
+			(field.DataType == gormSchema.Time || field.GORMDataType == gormSchema.Time) {
 			softDeleteField = field
 			break
 		}

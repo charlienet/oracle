@@ -3,6 +3,7 @@ package oracle
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"maps"
 	"regexp"
@@ -11,8 +12,10 @@ import (
 
 	"gorm.io/gorm/utils"
 
+	// 生产链路仅支持 go-ora 驱动（驱动名 "oracle"）；godror 为已放弃的路线图项
 	// _ "github.com/godror/godror"
 	go_ora "github.com/sijms/go-ora/v2"
+	"github.com/sijms/go-ora/v2/network"
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
 	"gorm.io/gorm/clause"
@@ -20,6 +23,7 @@ import (
 	"gorm.io/gorm/migrator"
 	"gorm.io/gorm/schema"
 
+	"github.com/charlienet/oracle/clauses"
 	"github.com/charlienet/oracle/driver_adapter"
 	oracleUtils "github.com/charlienet/oracle/utils"
 )
@@ -61,8 +65,29 @@ func supportsNativeBoolean(dbVer string) bool { return oracleMajor(dbVer) >= Ora
 // 具体是否生效依赖数据库参数。
 func supportsExtendedString(dbVer string) bool { return oracleMajor(dbVer) >= OracleVersion12 }
 
+// extendedStringLimit 返回 VARCHAR2 列的大小上限（字节）：
+// 12c+ 且 Initialize 探测到 MAX_STRING_SIZE=EXTENDED → 32767；
+// 其余情况（11g、未探测 Unknown、探测到 STANDARD）→ 4000，超过需用 CLOB。
+func (d Dialector) extendedStringLimit() int {
+	if d.Config != nil && supportsExtendedString(d.DBVer) && d.MaxStringSize == MaxStringSizeExtended {
+		return 32767
+	}
+	return 4000
+}
+
 // supportsVector 是否支持 VECTOR 类型（23ai 引入，用于 AI Vector Search）
 func supportsVector(dbVer string) bool { return oracleMajor(dbVer) >= OracleVersion23 }
+
+// supportsMergeReturning 是否支持 MERGE 语句的 RETURNING 子句。
+// 实测结论（Oracle 12.2.0.1, JEMPDB 容器）：MERGE 语句的 RETURNING 在任一
+// 分支位置（WHEN MATCHED THEN UPDATE SET 之后 / WHEN NOT MATCHED THEN INSERT
+// 之后）均报 ORA-00933: SQL command not properly ended；对照组 UPDATE/INSERT
+// 的 RETURNING INTO 绑定正常（UPDATE...RETURNING 实测 err=nil）。
+// 即 Oracle 的 MERGE 语句不支持 RETURNING 子句（语法限制，与版本无关），
+// 故本函数恒返回 false——MERGE 分支不输出 RETURNING，避免 12c+ 带默认值
+// 字段的 OnConflict 写入 ORA-00933。保留为显式开关：若未来确认某 Oracle
+// 版本支持，可改为 oracleMajor(dbVer) >= X 并复核构建位置。
+func supportsMergeReturning(dbVer string) bool { return false }
 
 // isOracle11g 判断当前数据库是否低于 12c（11g 及以下不支持 IDENTITY 列）。
 // 保留该函数以兼容既有调用，内部委托 supportsIdentity 取反。
@@ -70,15 +95,30 @@ func isOracle11g(dbVer string) bool {
 	return !supportsIdentity(dbVer)
 }
 
+// MaxStringSize 表示数据库 MAX_STRING_SIZE 参数的三态探测结果
+type MaxStringSize int
+
+const (
+	MaxStringSizeUnknown  MaxStringSize = iota // 未探测/探测失败（含 11g），保守按 STANDARD 处理
+	MaxStringSizeStandard                      // VARCHAR2 上限 4000 字节
+	MaxStringSizeExtended                      // VARCHAR2 上限 32767 字节
+)
+
 type Config struct {
-	DriverName           string
-	DSN                  string
-	Conn                 gorm.ConnPool //*sql.DB
-	DefaultStringSize    uint
-	DBName               string
-	DBVer                string
-	DriverType           driver_adapter.DriverType // 新增：驱动类型（go-ora 或 godror）
-	SkipQuoteIdentifiers bool                      // 新增：是否跳过标识符引用
+	DriverName        string
+	DSN               string
+	Conn              gorm.ConnPool //*sql.DB
+	DefaultStringSize uint
+	DBName            string
+	DBVer             string
+	MaxStringSize     MaxStringSize // MAX_STRING_SIZE 探测结果（三态：Unknown/Standard/Extended），由 Initialize 探测数据库参数后填充；未探测/探测失败（含 11g）时为零值 Unknown，按 STANDARD 保守处理
+	// DriverType 所请求的驱动类型。当前仅支持 go-ora：生产链路固定使用
+	// go-ora 驱动，设置任何值（含 DriverGodror）均不改变实际驱动选择；
+	// godror 支持未接线（Initialize 的驱动路径不读取该字段，仅 GetAdapter
+	// 在零值 "" 时回退为 DriverGoOra）。保持零值即可；显式设置为非 "go-ora"
+	// 的值时，Initialize 会打印一条告警提示配置无效。
+	DriverType           driver_adapter.DriverType
+	SkipQuoteIdentifiers bool // 新增：是否跳过标识符引用
 }
 
 type Dialector struct {
@@ -119,12 +159,19 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 		DeleteClauses: []string{"DELETE", "FROM", "WHERE", "RETURNING"},
 	})
 
-	// d.DriverName = "godror"
+	// d.DriverName = "godror" // 已停用：godror 未接线，当前仅支持 go-ora（默认驱动名 "oracle"）
+
+	// DriverType 为预留字段：当前仅支持 go-ora，生产链路固定使用 go-ora 驱动；
+	// 设置其他值（如 driver_adapter.DriverGodror）不改变实际驱动选择，仅告警提示配置无效
+	if d.DriverType != "" && d.DriverType != driver_adapter.DriverGoOra {
+		db.Logger.Warn(context.Background(), "oracle: Config.DriverType 当前未接线，设置 %q 无效，实际仍使用 go-ora 驱动（godror 支持未上线）", d.DriverType)
+	}
+
 	if d.DriverName == "" {
 		d.DriverName = "oracle"
 	}
 
-	// godror.Batch
+	// godror.Batch // 已停用：godror 为路线图项，未接线
 
 	if d.Conn != nil {
 		db.ConnPool = d.Conn
@@ -152,6 +199,24 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 		db.Logger.Warn(context.Background(), "oracle: 获取数据库版本失败，将按保守的 11g 行为运行: %v", err)
 	}
 
+	// 探测 MAX_STRING_SIZE（仅 12c+ 有意义；11g 无此参数）
+	if oracleMajor(d.DBVer) >= OracleVersion12 && d.Config != nil {
+		var maxStr string
+		// 必须用 database_properties：PDB 中 v$parameter 不返回 CDB 级参数 MAX_STRING_SIZE
+		//（ISPDB_MODIFIABLE=FALSE），database_properties 在 PDB 可查且返回该 PDB 有效值
+		if err := db.ConnPool.QueryRowContext(context.Background(),
+			"SELECT property_value FROM database_properties WHERE property_name = 'MAX_STRING_SIZE'").Scan(&maxStr); err != nil {
+			db.Logger.Warn(context.Background(), "oracle: MAX_STRING_SIZE 探测失败，按 STANDARD 保守处理: %v", err)
+		} else {
+			switch strings.ToUpper(strings.TrimSpace(maxStr)) {
+			case "EXTENDED":
+				d.MaxStringSize = MaxStringSizeExtended
+			case "STANDARD":
+				d.MaxStringSize = MaxStringSizeStandard
+			}
+		}
+	}
+
 	if err = db.Callback().Create().Replace("gorm:create", Create); err != nil {
 		return
 	}
@@ -175,20 +240,34 @@ func (d Dialector) Initialize(db *gorm.DB) (err error) {
 	return
 }
 
+// ClauseBuilders 返回 Oracle 方言的 clause 构建器集合。
+// 版本门控统一委托 supportsFetchOffset（单一来源，避免内联重复判定）：
+//   - 版本解析失败（空/不可解析，oracleMajor==0）时保守使用 11g 的 ROWNUM 方案，
+//     避免在 11g 下使用 12c+ 的 FETCH NEXT 语法导致 ORA-00933；
+//   - >= 12c 使用 OFFSET/FETCH 分页语法。
+//
+// 同时注册 "FOR" 子句构建器（gorm 的 clause.Locking.Name() 返回 "FOR"，
+// 对应 queryClauses 中的 "FOR"）：输出 Oracle 行锁语法 FOR UPDATE / FOR SHARE
+// 退化 / NOWAIT / SKIP LOCKED，其中 SKIP LOCKED 按 12c+ 版本门控。
 func (d Dialector) ClauseBuilders() map[string]clause.ClauseBuilder {
-	dbver, _ := strconv.Atoi(strings.Split(d.DBVer, ".")[0])
-	// 版本解析失败（dbver==0）时保守使用 11g 的 ROWNUM 方案，
-	// 避免在 11g 下使用 12c+ 的 FETCH NEXT 语法导致 ORA-00933
-	if dbver == 0 || dbver < 12 {
-		return map[string]clause.ClauseBuilder{
-			"LIMIT": d.RewriteLimit11,
-		}
-
-	} else {
-		return map[string]clause.ClauseBuilder{
-			"LIMIT": d.RewriteLimit,
+	builders := map[string]clause.ClauseBuilder{
+		"LIMIT": d.RewriteLimit11,
+	}
+	if supportsFetchOffset(d.DBVer) {
+		builders["LIMIT"] = d.RewriteLimit
+	}
+	builders["FOR"] = func(c clause.Clause, builder clause.Builder) {
+		if locking, ok := c.Expression.(clause.Locking); ok {
+			clauses.Locking{
+				Strength: locking.Strength,
+				Table:    locking.Table.Name,
+				Options:  locking.Options,
+				// 11g 防护：SKIP LOCKED 是 12c 引入的语法，11g 下静默忽略
+				AllowSkipLocked: func() bool { return supportsFetchOffset(d.DBVer) },
+			}.Build(builder)
 		}
 	}
+	return builders
 }
 
 func (d Dialector) RewriteLimit(c clause.Clause, builder clause.Builder) {
@@ -348,10 +427,31 @@ func (d Dialector) QuoteTo(writer clause.Writer, str string) {
 		return
 	}
 
+	// 保留字必须引用
 	if str != "" && IsReservedWord(str) {
-		_ = writer.WriteByte('"')
-		_, _ = writer.WriteString(str)
-		_ = writer.WriteByte('"')
+		_, _ = writer.WriteString(`"` + str + `"`)
+		return
+	}
+
+	// 检查是否为混合大小写（同时包含大写和小写字母需要引用）
+	hasUpper := false
+	hasLower := false
+	for _, r := range str {
+		if r >= 'A' && r <= 'Z' {
+			hasUpper = true
+		}
+		if r >= 'a' && r <= 'z' {
+			hasLower = true
+		}
+		// 提前退出：同时发现大小写
+		if hasUpper && hasLower {
+			break
+		}
+	}
+
+	// 混合大小写需要引用
+	if hasUpper && hasLower {
+		_, _ = writer.WriteString(`"` + str + `"`)
 	} else {
 		_, _ = writer.WriteString(str)
 	}
@@ -376,6 +476,18 @@ func (d Dialector) Explain(sql string, vars ...any) string {
 
 func (d Dialector) DataTypeOf(field *schema.Field) string {
 	var sqlType string
+
+	// gorm 的 unixtime serializer（schema.UnixSecondSerializer）语义：
+	// int64 字段（Unix 秒）经序列化后以 time.Time 存储/读取——Value() 返回
+	// time.Time，Scan() 经 sql.NullTime 接收（NUMBER 列读回的 int64 无法转 time.Time，
+	// 会报 unsupported Scan）。因此列型须为 TIMESTAMP 系列（与 schema.Time 一致），
+	// 若按 int64 默认的 INTEGER/NUMBER 映射，写入会触发
+	// ORA-00932（expected NUMBER got TIMESTAMP），读取也会失败。
+	if serializer, ok := schema.GetSerializer(field.TagSettings["SERIALIZER"]); ok {
+		if _, isUnixSecond := serializer.(schema.UnixSecondSerializer); isUnixSecond {
+			return "TIMESTAMP WITH TIME ZONE"
+		}
+	}
 
 	switch field.DataType {
 	case schema.Bool:
@@ -416,19 +528,13 @@ func (d Dialector) DataTypeOf(field *schema.Field) string {
 			}
 		}
 
-		// Oracle 12c+（Extended）支持最长 32767 字节的 VARCHAR2（32k 特性）；
-		// 11g 及未开启 Extended 的库超过 4000 必须用 CLOB。
-		// 保守策略：
-		//   - size 在 2000~4000 之间维持 CLOB 不变（保持历史行为）
-		//   - size > 4000 且版本 >= 12 → VARCHAR2(size)（利用 32k 特性）
-		//   - size > 4000 且 11g → CLOB（保持现状）
-		if size > 4000 {
-			if supportsExtendedString(d.DBVer) {
-				sqlType = fmt.Sprintf("VARCHAR2(%d)", size)
-			} else {
-				sqlType = "CLOB"
-			}
-		} else if size >= 2000 {
+		// 支持 32k VARCHAR2 需同时满足：版本允许（12c+）且数据库实际启用
+		// MAX_STRING_SIZE=EXTENDED（Initialize 时从 database_properties 探测）。
+		// 未探测/探测失败/STANDARD 一律按 4000 字节上限保守处理，超过用 CLOB，
+		// 避免在真实 MAX_STRING_SIZE=STANDARD 的库上生成 VARCHAR2(>4000) 导致
+		// ORA-00910（无效的列长度）。
+		limit := d.extendedStringLimit()
+		if size > limit {
 			sqlType = "CLOB"
 		} else {
 			sqlType = fmt.Sprintf("VARCHAR2(%d)", size)
@@ -443,6 +549,17 @@ func (d Dialector) DataTypeOf(field *schema.Field) string {
 
 	case schema.Bytes:
 		sqlType = "BLOB"
+	case "vector":
+		// Oracle 23ai 引入 VECTOR 类型（AI Vector Search）
+		// 低于 23ai 的版本不支持，返回空字符串
+		if !supportsVector(d.DBVer) {
+			return ""
+		}
+		size := field.Size
+		if size <= 0 {
+			size = 1536 // 默认向量维度
+		}
+		sqlType = fmt.Sprintf("VECTOR(%d)", size)
 	default:
 		sqlType = string(field.DataType)
 
@@ -467,13 +584,18 @@ func (d Dialector) DataTypeOf(field *schema.Field) string {
 			sqlType = fmt.Sprintf("VARCHAR2(%d)", size)
 		}
 
-		// text/json 统一映射为 CLOB：
+		// text/json/clob 统一映射为 CLOB：
 		// Oracle 21c+ 虽有原生 JSON 类型，但 go-ora（纯 Go）对 JSON 列仅按
-		// LOB/文本传输、不做 OSON 解析，且 godror 依赖 ODPI-C/Instant Client；
-		// 统一用 CLOB 存 JSON 文本对 11g~21c 各版本与两个驱动都兼容
+		// LOB/文本传输、不做 OSON 解析；
+		// 统一用 CLOB 存 JSON 文本对 11g~21c 各版本均兼容
 		// （12c~19c 的 JSON 本就是 JSON 函数 + CLOB/VARCHAR2 存储）。
-		if strings.EqualFold(sqlType, "text") || strings.EqualFold(sqlType, "json") {
+		if strings.EqualFold(sqlType, "text") || strings.EqualFold(sqlType, "json") || strings.EqualFold(sqlType, "clob") {
 			sqlType = "CLOB"
+		}
+
+		// blob 类型同样规范化为大写
+		if strings.EqualFold(sqlType, "blob") {
+			sqlType = "BLOB"
 		}
 
 		if sqlType == "" {
@@ -501,9 +623,127 @@ func (d Dialector) RollbackTo(tx *gorm.DB, name string) error {
 	return tx.Error
 }
 
+// GetAdapter 返回驱动适配器。
+// 注意：Config.DriverType 为预留字段，当前未接线——生产链路固定使用
+// go-ora 驱动（Initialize 的驱动路径不读取该字段）；godror 适配器
+// （driver_adapter/godror.go，受 build tag godror 约束）为预留实现，
+// 未接入 Initialize。此方法仅保证默认返回 go-ora 适配器，供既有调用兼容。
 func (d Dialector) GetAdapter() driver_adapter.Adapter {
 	if d.DriverType == "" {
 		d.DriverType = driver_adapter.DriverGoOra
 	}
 	return driver_adapter.Get(d.DriverType)
+}
+
+// oraErrorCodeRegex 匹配错误文本中的 ORA- 错误码（5 位数字，如 "ORA-00001"）
+var oraErrorCodeRegex = regexp.MustCompile(`ORA-(\d{5})`)
+
+// oraErrorCode 从错误中提取 Oracle 错误码。
+//   - 优先结构化提取：go-ora 的错误为 *network.OracleError 结构体，
+//     直接读取 ErrCode 字段（如 ORA-01400 的 ErrCode 为 1400），不依赖文本格式；
+//   - 兜底用正则从错误文本提取 "ORA-xxxxx"（兼容 errors.New 模拟的纯文本错误
+//     及第三方包装）；
+//   - 提取不到返回 0（非 Oracle 错误）。
+func oraErrorCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var oraErr *network.OracleError
+	if errors.As(err, &oraErr) {
+		return oraErr.ErrCode
+	}
+	if m := oraErrorCodeRegex.FindStringSubmatch(err.Error()); m != nil {
+		if code, convErr := strconv.Atoi(m[1]); convErr == nil {
+			return code
+		}
+	}
+	return 0
+}
+
+// Translate 将 Oracle 错误映射为 GORM 标准错误。
+// 优先基于 go-ora 结构化错误码（network.OracleError.ErrCode）映射；
+// 无法结构化提取时回退到错误文本匹配（兼容纯文本/自定义包装错误）。
+// 其余无对应 gorm.Err* 的 ORA 错误（如 ORA-00060 死锁、ORA-01722 类型转换
+// 失败、ORA-12899 值过大、ORA-01438 值超出精度等）保持原样返回，不做包裹。
+func (d Dialector) Translate(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	switch oraErrorCode(err) {
+	case 1: // ORA-00001: 唯一约束违反
+		return gorm.ErrDuplicatedKey
+	case 1403: // ORA-01403: 未找到数据
+		return gorm.ErrRecordNotFound
+	case 942: // ORA-00942: 表或视图不存在
+		return gorm.ErrInvalidData
+	case 1400: // ORA-01400: 无法插入 NULL（非空约束违反）
+		// 注：gorm v1.31.2 未定义 ErrNotNullViolated（GORM 官方错误集无此错误），
+		// 保持既有映射 gorm.ErrInvalidData，与 gorm 错误集保持一致
+		return gorm.ErrInvalidData
+	case 2291, 2292: // ORA-02291 / ORA-02292: 外键约束违反
+		return gorm.ErrForeignKeyViolated
+	case 2290: // ORA-02290: CHECK 约束违反
+		return gorm.ErrCheckConstraintViolated
+	}
+
+	// 文本兜底：错误码结构化提取不到时，兼容纯文本错误（如 errors.New 模拟、
+	// 非 go-ora 驱动的 ORA 文本）。保持与结构化映射一致的码表。
+	errStr := err.Error()
+	switch {
+	case strings.Contains(errStr, "ORA-00001"):
+		return gorm.ErrDuplicatedKey
+	case strings.Contains(errStr, "ORA-01403"):
+		return gorm.ErrRecordNotFound
+	case strings.Contains(errStr, "ORA-00942"):
+		return gorm.ErrInvalidData
+	case strings.Contains(errStr, "ORA-01400"):
+		return gorm.ErrInvalidData
+	case strings.Contains(errStr, "ORA-02291") || strings.Contains(errStr, "ORA-02292"):
+		return gorm.ErrForeignKeyViolated
+	case strings.Contains(errStr, "ORA-02290"):
+		return gorm.ErrCheckConstraintViolated
+	}
+
+	// 其他错误原样返回
+	return err
+}
+
+// GetDBConn 返回底层数据库连接
+// P1-7: 实现此方法以支持通过 GORM API 获取底层 *sql.DB
+func (d *Dialector) GetDBConn() (*sql.DB, error) {
+	if d.Conn != nil {
+		if db, ok := d.Conn.(*sql.DB); ok {
+			return db, nil
+		}
+	}
+	return nil, fmt.Errorf("connection pool is not *sql.DB")
+}
+
+// GetOracleDriver 返回底层 go-ora 驱动
+// P2-5: 解决 db.Driver() 返回 *enumNormalizeDriver 导致用户类型断言失败的问题
+func GetOracleDriver(db *gorm.DB) (*go_ora.OracleDriver, error) {
+	if db == nil {
+		return nil, fmt.Errorf("db is nil")
+	}
+
+	dialector, ok := db.Dialector.(*Dialector)
+	if !ok {
+		return nil, fmt.Errorf("dialector is not oracle.Dialector")
+	}
+
+	// 从 *sql.DB 获取底层 driver
+	sqlDB, err := dialector.GetDBConn()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get *sql.DB: %w", err)
+	}
+
+	// sql.DB.Driver() 返回 driver.Driver 接口
+	// 在 go-ora 路径下，这是 *enumNormalizeDriver
+	driver := sqlDB.Driver()
+	if wrapper, ok := driver.(*enumNormalizeDriver); ok {
+		return wrapper.inner, nil
+	}
+
+	return nil, fmt.Errorf("cannot get underlying Oracle driver")
 }

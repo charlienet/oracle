@@ -27,6 +27,10 @@ var (
 // scan 时用 schema.LookUpField(column) 按大写列名匹配字段，找不到小写
 // DBName 的字段，导致该列不回填（虚拟列等显式小写 tag 的字段全部为空）。
 // 这里补充 大写DBName -> 字段 的别名键，使 LookUpField 能匹配。
+//
+// 同时处理 Joins 预加载：GORM 的 Joins 会为关联表字段生成带前缀的列别名
+// （如 "User__id"），Oracle 会将其转为大写（"USER__ID"），需要将这些大写别名
+// 也映射到对应的关联字段，确保 Joins 查询能正确填充关联数据。
 func patchUpperDBNameKeys(s *schema.Schema) {
 	if s == nil {
 		return
@@ -56,6 +60,14 @@ func patchUpperDBNameKeys(s *schema.Schema) {
 			}
 		}
 	}
+
+	// 注意：不在此处为 Joins 预加载添加映射，原因：
+	// 1. GORM 内部已有处理 Joins 查询的机制，能识别带前缀的列名（如 "User__id"）
+	//    并将其正确映射到嵌套的关联结构体
+	// 2. 将关联模型的字段添加到主模型的 FieldsByDBName 会导致类型不匹配问题：
+	//    - 关联字段属于不同的 schema，不应在主模型中映射
+	//    - 可能导致 GORM 在错误的反射上下文中设置字段值，引发 panic
+	// 3. Oracle 列名大小写问题仅影响 DBName 匹配，GORM 的 Joins 处理已考虑这点
 
 	// 原子替换引用
 	s.FieldsByDBName = newMap
