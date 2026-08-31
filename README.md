@@ -1,6 +1,6 @@
 # GORM Oracle Driver
 
-基于 [go-ora](https://github.com/sijms/go-ora) 实现的 GORM Oracle 数据库驱动，内置**版本感知**能力、**驱动抽象层**（go-ora / godror 可切换）、自定义回调体系（INSERT/UPDATE/DELETE/QUERY）与完整测试套件。
+基于 [go-ora](https://github.com/sijms/go-ora) 实现的 GORM Oracle 数据库驱动，内置**版本感知**能力、**驱动抽象层**（当前仅支持 go-ora）、自定义回调体系（INSERT/UPDATE/DELETE/QUERY）与完整测试套件。
 
 ## 特性
 
@@ -10,7 +10,7 @@
   - 21c+：原生 `BOOLEAN` 列类型（更早版本用 `NUMBER(1)` 模拟）
   - 23ai：支持 `VECTOR` 类型（AI Vector Search）
   - 12c+（Extended）：`VARCHAR2` 支持最大 32k 字节，超出自动降级为 `CLOB`
-- **驱动抽象层**（`driver_adapter`）：统一 go-ora（纯 Go）与 godror（基于 ODPI-C）的差异，通过 `Config.DriverType` 一键切换
+- **驱动抽象层**（`driver_adapter`）：统一 go-ora（纯 Go）驱动的能力差异；godror 支持为路线图项，尚未接线启用
 - **自定义回调体系**：
   - `INSERT ... RETURNING INTO`：支持默认值/自增字段回填，批量插入逐行执行保证一致性与返回值正确性
   - `ON CONFLICT` → `MERGE INTO`：自动改写为 Oracle `MERGE` 语法
@@ -85,7 +85,7 @@ import (
 
 db, err := gorm.Open(oracle.New(oracle.Config{
     DSN:                  "oracle://user:password@127.0.0.1:1521/XE",
-    DriverType:           driver_adapter.DriverGoOra, // 驱动类型：go-ora（默认）或 godror
+    DriverType:           driver_adapter.DriverGoOra, // 驱动类型：go-ora（默认，当前唯一受支持）
     SkipQuoteIdentifiers: false,                      // 是否跳过标识符引用
     DBName:               "SCOTT",                    // 指定 Schema（表名将带 Schema 前缀）
     // Conn: 传入已存在的 *sql.DB 连接池
@@ -95,7 +95,7 @@ db, err := gorm.Open(oracle.New(oracle.Config{
 | 配置项 | 说明 |
 | --- | --- |
 | `DSN` | 连接串 |
-| `DriverType` | 底层驱动类型：`driver_adapter.DriverGoOra`（默认）/ `driver_adapter.DriverGodror` |
+| `DriverType` | 底层驱动类型：`driver_adapter.DriverGoOra`（默认；当前唯一受支持。`DriverGodror` 为预留值，未接线，使用会失败） |
 | `SkipQuoteIdentifiers` | 为 `true` 时不引用标识符 |
 | `DBName` | 指定 Schema 名，开启后表名自动带上 `SCHEMA.TABLE` 前缀 |
 | `Conn` | 直接传入已建立的连接池（`*sql.DB`），此时忽略 DSN |
@@ -103,10 +103,9 @@ db, err := gorm.Open(oracle.New(oracle.Config{
 
 ### 驱动抽象层
 
-`driver_adapter` 包统一了不同 Oracle 驱动的差异（输出参数、LOB、批量数据、多行 RETURNING 等能力探测），默认使用 go-ora（纯 Go，无需本地依赖）。如需切换到 godror：
+`driver_adapter` 包统一了 Oracle 驱动的能力差异（输出参数、LOB、批量数据、多行 RETURNING 等能力探测）。
 
-1. 在代码中显式指定 `DriverType: driver_adapter.DriverGodror`
-2. 引入 godror 依赖并使用 `-tags godror` 构建（`driver_adapter/godror.go` 受 `go:build godror` 约束）
+> **当前仅支持 go-ora**（默认驱动名 `"oracle"`）。`driver_adapter` 中保留的 godror 实现（`driver_adapter/godror.go`，受 `go:build godror` 约束）为路线图项，尚未在 `Initialize` 中接线启用；将 `Config.DriverType` 设置为 `DriverGodror` 不会生效，使用 godror 会失败。
 
 ## 版本适配行为
 
@@ -151,6 +150,7 @@ db.Unscoped().Delete(&User{}, 1) // 强制物理删除
 - 创建表时若关联关系声明了 `ON UPDATE CASCADE / SET NULL`，驱动会自动生成同名触发器；删除表时需先删除依赖的表或使用 `CASCADE CONSTRAINTS`（已内置）
 - 11g 下通过序列 + 触发器模拟自增时，触发器和序列按 `SEQ_<table>` / `TRG_<table>` 命名，删除表会级联清理
 - 布尔值在写入时转换为 `1/0`，读取时转换回 Go `bool`
+- 事务隔离级别仅支持默认值（即 READ COMMITTED）：显式指定隔离级别（如 `SERIALIZABLE`，甚至显式 `READ COMMITTED`）受 go-ora 驱动限制会报错，详见 [LIMITATIONS.md](LIMITATIONS.md)
 
 ## 测试
 
@@ -168,4 +168,4 @@ go test ./...
 
 ## License
 
-见 [License](License)。
+见 [LICENSE](LICENSE)。
