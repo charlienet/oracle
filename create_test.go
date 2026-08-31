@@ -108,8 +108,9 @@ func TestCreateWithOnConflict(t *testing.T) {
 	}
 }
 
-func TestCreateBatchMERGEError(t *testing.T) {
-	// 多行 values + ON CONFLICT：批量 MERGE 不被支持，应报错
+func TestCreateBatchMerge(t *testing.T) {
+	// 多行 values + ON CONFLICT：批量 MERGE 现受支持，
+	// 应生成 MERGE + SELECT UNION ALL 形式的批量 UPSERT SQL
 	batch := &[]createTestModel{{ID: 1, Name: "a"}, {ID: 2, Name: "b"}}
 	db := newTestDB(t, batch)
 	db.Statement.AddClause(clause.OnConflict{
@@ -118,11 +119,16 @@ func TestCreateBatchMERGEError(t *testing.T) {
 
 	Create(db)
 
-	if db.Error == nil {
-		t.Fatal("expected error for batch MERGE, got nil")
+	if db.Error != nil {
+		t.Fatalf("Create returned error: %v", db.Error)
 	}
-	if !strings.Contains(db.Error.Error(), "batch UPSERT") {
-		t.Errorf("error %q does not contain %q", db.Error.Error(), "batch UPSERT")
+
+	sql := db.Statement.SQL.String()
+	t.Logf("Generated batch MERGE SQL: %s", sql)
+	for _, want := range []string{"MERGE INTO", "UNION ALL", "WHEN MATCHED", "WHEN NOT MATCHED"} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("batch MERGE SQL %q missing %q", sql, want)
+		}
 	}
 }
 
@@ -153,7 +159,7 @@ func TestCreateWithDefaultValues(t *testing.T) {
 }
 
 func TestCreateBatchSlice(t *testing.T) {
-	// 批量插入：slice 输入应生成多行 VALUES
+	// 批量插入：slice 输入应生成 INSERT ALL（INSERT ALL INTO ... INTO ... SELECT * FROM dual）
 	batch := &[]createTestModel{{ID: 1, Name: "a"}, {ID: 2, Name: "b"}}
 	db := newTestDB(t, batch)
 
@@ -164,8 +170,9 @@ func TestCreateBatchSlice(t *testing.T) {
 	}
 
 	sql := db.Statement.SQL.String()
-	if !strings.Contains(sql, "INSERT INTO") {
-		t.Errorf("batch Create SQL %q missing INSERT INTO", sql)
+	t.Logf("Generated batch SQL: %s", sql)
+	if !strings.Contains(sql, "INSERT ALL") {
+		t.Errorf("batch Create SQL %q missing INSERT ALL", sql)
 	}
 	if !strings.Contains(sql, "VALUES") {
 		t.Errorf("batch Create SQL %q missing VALUES", sql)
@@ -247,4 +254,92 @@ func TestCreateOnConflictWithPKFiltering(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestBatchChunkSize 验证批量分片大小计算：
+// 60000/列数 向下取整，下限 1；0 列防御返回 1。
+func TestBatchChunkSize(t *testing.T) {
+	tests := []struct {
+		name    string
+		columns int
+		want    int
+	}{
+		{"1 column", 1, 60000},
+		{"5 columns", 5, 12000},
+		{"20 columns", 20, 3000},
+		{"100 columns", 100, 600},
+		{"65535+ columns 下限 1", 65536, 1},
+		{"0 columns 防御", 0, 1},
+		{"负数防御", -5, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := batchChunkSize(tt.columns); got != tt.want {
+				t.Errorf("batchChunkSize(%d) = %d, want %d", tt.columns, got, tt.want)
+			}
+		})
+	}
+}
+
+// assertMergeSQLShape 断言 MERGE SQL 形态：
+//   - 不包含 RETURNING（实测 Oracle 12.2.0.1 的 MERGE 不支持 RETURNING，
+//     supportsMergeReturning 恒 false，任一分支位置输出均会 ORA-00933）；
+//   - 分支顺序正确：WHEN MATCHED 在 WHEN NOT MATCHED 之前。
+func assertMergeSQLShape(t *testing.T, sql string) {
+	t.Helper()
+	if strings.Contains(sql, "RETURNING") {
+		t.Errorf("MERGE SQL 不应包含 RETURNING（Oracle MERGE 不支持该子句，会 ORA-00933）\nSQL: %s", sql)
+	}
+	idxMatched := strings.Index(sql, "WHEN MATCHED")
+	idxNotMatched := strings.Index(sql, "WHEN NOT MATCHED")
+	if idxMatched == -1 {
+		t.Fatal("SQL missing WHEN MATCHED")
+	}
+	if idxNotMatched == -1 {
+		t.Fatal("SQL missing WHEN NOT MATCHED")
+	}
+	if idxMatched >= idxNotMatched {
+		t.Errorf("分支顺序错误：WHEN MATCHED 应在 WHEN NOT MATCHED 之前，实际索引 %d >= %d\nSQL: %s",
+			idxMatched, idxNotMatched, sql)
+	}
+}
+
+// TestCreateMergeSQLShape 验证单条 MERGE 的 SQL 形态（无 RETURNING + 分支顺序）。
+func TestCreateMergeSQLShape(t *testing.T) {
+	model := &createTestModel{ID: 1, Name: "alice", Code: "XYZ"}
+	db := newTestDB(t, model)
+	db.Statement.AddClause(clause.OnConflict{
+		DoUpdates: clause.AssignmentColumns([]string{"name", "code"}),
+	})
+
+	Create(db)
+
+	if db.Error != nil {
+		t.Fatalf("Create returned error: %v", db.Error)
+	}
+
+	sql := db.Statement.SQL.String()
+	t.Logf("Generated single MERGE SQL: %s", sql)
+	assertMergeSQLShape(t, sql)
+}
+
+// TestCreateBatchMergeSQLShape 验证批量 MERGE chunk 的 SQL 形态
+// （无 RETURNING + 分支顺序）。
+func TestCreateBatchMergeSQLShape(t *testing.T) {
+	batch := &[]createTestModel{{ID: 1, Name: "a"}, {ID: 2, Name: "b"}}
+	db := newTestDB(t, batch)
+	db.Statement.AddClause(clause.OnConflict{
+		DoUpdates: clause.AssignmentColumns([]string{"name"}),
+	})
+
+	Create(db)
+
+	if db.Error != nil {
+		t.Fatalf("Create returned error: %v", db.Error)
+	}
+
+	sql := db.Statement.SQL.String()
+	t.Logf("Generated batch MERGE SQL: %s", sql)
+	assertMergeSQLShape(t, sql)
 }

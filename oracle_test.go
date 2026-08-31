@@ -1,6 +1,7 @@
 package oracle
 
 import (
+	"database/sql"
 	"reflect"
 	"strings"
 	"testing"
@@ -20,6 +21,12 @@ type limitModel struct {
 
 func newTestDialector(dbVer string, defaultStringSize uint) *Dialector {
 	return &Dialector{Config: &Config{DBVer: dbVer, DefaultStringSize: defaultStringSize, SkipQuoteIdentifiers: false}}
+}
+
+// newTestDialectorWithMaxStringSize 构造带显式 MAX_STRING_SIZE 探测结果的 dialector
+// （用于验证三态：Unknown/Standard/Extended 对 VARCHAR2 上限判定的影响）
+func newTestDialectorWithMaxStringSize(dbVer string, defaultStringSize uint, mss MaxStringSize) *Dialector {
+	return &Dialector{Config: &Config{DBVer: dbVer, DefaultStringSize: defaultStringSize, MaxStringSize: mss, SkipQuoteIdentifiers: false}}
 }
 
 func newTestStatement(d *Dialector) *gorm.Statement {
@@ -50,6 +57,7 @@ func limitClause(offset, limit int) clause.Clause {
 
 func TestDataTypeOf(t *testing.T) {
 	d12 := newTestDialector("12.1.0.2.0", 1024)
+	d12Ext := newTestDialectorWithMaxStringSize("12.1.0.2.0", 1024, MaxStringSizeExtended)
 
 	tests := []struct {
 		name      string
@@ -139,14 +147,14 @@ func TestDataTypeOf(t *testing.T) {
 			want:      "VARCHAR2(1024)",
 		},
 		{
-			name:      "string size 2000 maps to CLOB",
+			name:      "string size 2000 maps to VARCHAR2(2000)",
 			dialector: d12,
 			mutate:    func(f *schema.Field) { f.DataType = schema.String; f.Size = 2000 },
-			want:      "CLOB",
+			want:      "VARCHAR2(2000)",
 		},
 		{
-			name:      "string size 4096 on 12c maps to VARCHAR2(4096) via 32k support",
-			dialector: d12,
+			name:      "string size 4096 on 12c maps to VARCHAR2(4096) via 32k support (EXTENDED)",
+			dialector: d12Ext,
 			mutate:    func(f *schema.Field) { f.DataType = schema.String; f.Size = 4096 },
 			want:      "VARCHAR2(4096)",
 		},
@@ -157,10 +165,22 @@ func TestDataTypeOf(t *testing.T) {
 			want:      "CLOB",
 		},
 		{
-			name:      "string size 5000 on 12c maps to VARCHAR2(5000) via 32k support",
-			dialector: d12,
+			name:      "string size 5000 on 12c maps to VARCHAR2(5000) via 32k support (EXTENDED)",
+			dialector: d12Ext,
 			mutate:    func(f *schema.Field) { f.DataType = schema.String; f.Size = 5000 },
 			want:      "VARCHAR2(5000)",
+		},
+		{
+			name:      "string size 5000 on 12c STANDARD maps to CLOB",
+			dialector: newTestDialectorWithMaxStringSize("12.1.0.2.0", 1024, MaxStringSizeStandard),
+			mutate:    func(f *schema.Field) { f.DataType = schema.String; f.Size = 5000 },
+			want:      "CLOB",
+		},
+		{
+			name:      "string size 5000 on 12c 未探测(Unknown) maps to CLOB 保守处理",
+			dialector: d12,
+			mutate:    func(f *schema.Field) { f.DataType = schema.String; f.Size = 5000 },
+			want:      "CLOB",
 		},
 		{
 			name:      "string size 5000 on 11g maps to CLOB",
@@ -340,6 +360,32 @@ func TestQuoteTo(t *testing.T) {
 			d.QuoteTo(&buf, tt.value)
 			if got := buf.String(); got != tt.want {
 				t.Errorf("QuoteTo(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestQuoteTo_MixedCase 验证混合大小写标识符被正确引用
+func TestQuoteTo_MixedCase(t *testing.T) {
+	d := newTestDialector("12.1.0.2.0", 1024)
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"MyColumn", `"MyColumn"`},   // 混合大小写，需要引号
+		{"MYCOLUMN", "MYCOLUMN"},     // 全大写，不需要引号
+		{"mycolumn", "mycolumn"},     // 全小写，不需要引号（Oracle 默认大写）
+		{"My_Column", `"My_Column"`}, // 混合大小写+下划线，需要引号
+		{"SELECT", `"SELECT"`},       // 保留字，需要引号
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			var buf strings.Builder
+			d.QuoteTo(&buf, tt.input)
+			if buf.String() != tt.expected {
+				t.Errorf("QuoteTo(%q) = %q, expected %q", tt.input, buf.String(), tt.expected)
 			}
 		})
 	}
@@ -566,9 +612,59 @@ func TestClauseBuilders(t *testing.T) {
 			t.Errorf("expected FETCH-based rewrite for 19c, got %q", got)
 		}
 	})
+
+	t.Run("FOR clause builder registered with Oracle locking output", func(t *testing.T) {
+		d := newTestDialector("19.0.0.0", 1024)
+		builders := d.ClauseBuilders()
+
+		builder, ok := builders["FOR"]
+		if !ok {
+			t.Fatal("expected FOR clause builder to be registered")
+		}
+
+		stmt := newTestStatement(d)
+		stmt.SQL.WriteString("SELECT * FROM TEST_USERS")
+		builder(clause.Clause{Name: "FOR", Expression: clause.Locking{
+			Strength: clause.LockingStrengthUpdate,
+			Options:  clause.LockingOptionsNoWait,
+		}}, stmt)
+
+		if got := stmt.SQL.String(); !strings.Contains(got, "FOR UPDATE NOWAIT") {
+			t.Errorf("expected Oracle FOR UPDATE NOWAIT, got %q", got)
+		}
+	})
+
+	t.Run("FOR clause builder gates SKIP LOCKED by version", func(t *testing.T) {
+		// 12c+：输出 SKIP LOCKED
+		d12 := newTestDialector("12.1.0.2.0", 1024)
+		stmt12 := newTestStatement(d12)
+		d12.ClauseBuilders()["FOR"](clause.Clause{Name: "FOR", Expression: clause.Locking{
+			Strength: clause.LockingStrengthUpdate,
+			Options:  clause.LockingOptionsSkipLocked,
+		}}, stmt12)
+		if got := stmt12.SQL.String(); !strings.Contains(got, "FOR UPDATE SKIP LOCKED") {
+			t.Errorf("12c expected SKIP LOCKED output, got %q", got)
+		}
+
+		// 11g：忽略 SKIP LOCKED
+		d11 := newTestDialector("11.2.0.4.0", 1024)
+		stmt11 := newTestStatement(d11)
+		d11.ClauseBuilders()["FOR"](clause.Clause{Name: "FOR", Expression: clause.Locking{
+			Strength: clause.LockingStrengthUpdate,
+			Options:  clause.LockingOptionsSkipLocked,
+		}}, stmt11)
+		if got := stmt11.SQL.String(); strings.Contains(got, "SKIP LOCKED") {
+			t.Errorf("11g SKIP LOCKED should be ignored, got %q", got)
+		}
+	})
 }
 
 // ---- TestVersionCapabilities ----
+//
+// 注意：supportsExtendedString 等版本级判定仅回答「版本是否允许该特性」，
+// 不代表数据库实际生效。32k VARCHAR2 是否真正可用，取决于 Initialize 时对
+// MAX_STRING_SIZE 的探测（database_properties），由 Dialector.extendedStringLimit
+// 依据 Config.MaxStringSize 三态（Unknown/Standard/Extended）最终决定。
 
 func TestVersionCapabilities(t *testing.T) {
 	tests := []struct {
@@ -581,16 +677,17 @@ func TestVersionCapabilities(t *testing.T) {
 		wantExtendedString bool
 		wantVector         bool
 		wantIsOracle11g    bool
+		wantMergeReturning bool
 	}{
-		{"11g", "11.2.0.4.0", 11, false, false, false, false, false, true},
-		{"10g", "10.2.0.1.0", 10, false, false, false, false, false, true},
-		{"12c", "12.1.0.2.0", 12, true, true, false, true, false, false},
-		{"18c", "18.0.0.0.0", 18, true, true, false, true, false, false},
-		{"19c", "19.0.0.0.0", 19, true, true, false, true, false, false},
-		{"21c", "21.0.0.0.0", 21, true, true, true, true, false, false},
-		{"23ai", "23.0.0.0.0", 23, true, true, true, true, true, false},
-		{"empty", "", 0, false, false, false, false, false, true},
-		{"invalid", "invalid", 0, false, false, false, false, false, true},
+		{"11g", "11.2.0.4.0", 11, false, false, false, false, false, true, false},
+		{"10g", "10.2.0.1.0", 10, false, false, false, false, false, true, false},
+		{"12c", "12.1.0.2.0", 12, true, true, false, true, false, false, false},
+		{"18c", "18.0.0.0.0", 18, true, true, false, true, false, false, false},
+		{"19c", "19.0.0.0.0", 19, true, true, false, true, false, false, false},
+		{"21c", "21.0.0.0.0", 21, true, true, true, true, false, false, false},
+		{"23ai", "23.0.0.0.0", 23, true, true, true, true, true, false, false},
+		{"empty", "", 0, false, false, false, false, false, true, false},
+		{"invalid", "invalid", 0, false, false, false, false, false, true, false},
 	}
 
 	for _, tt := range tests {
@@ -615,6 +712,11 @@ func TestVersionCapabilities(t *testing.T) {
 			}
 			if got := isOracle11g(tt.dbVer); got != tt.wantIsOracle11g {
 				t.Errorf("isOracle11g(%q) = %v, want %v", tt.dbVer, got, tt.wantIsOracle11g)
+			}
+			// 实测（12.2.0.1）：Oracle MERGE 不支持 RETURNING（任一分支位置均
+			// ORA-00933），supportsMergeReturning 恒 false，与版本无关
+			if got := supportsMergeReturning(tt.dbVer); got != tt.wantMergeReturning {
+				t.Errorf("supportsMergeReturning(%q) = %v, want %v", tt.dbVer, got, tt.wantMergeReturning)
 			}
 		})
 	}
@@ -755,4 +857,133 @@ func TestSavePoint(t *testing.T) {
 
 func TestRollbackTo(t *testing.T) {
 	t.Skip("RollbackTo 需要真实的 *gorm.DB 连接，跳过")
+}
+
+// TestDriverTypeAssertion 验证可以通过辅助函数获取底层驱动
+// P2-5: 用户类型断言问题，需要辅助函数获取底层 *go_ora.OracleDriver
+func TestDriverTypeAssertion(t *testing.T) {
+	t.Run("returns error when db is nil", func(t *testing.T) {
+		_, err := GetOracleDriver(nil)
+		if err == nil {
+			t.Error("expected error when db is nil, got nil")
+		}
+	})
+
+	t.Run("returns error when dialector is not oracle.Dialector", func(t *testing.T) {
+		// 创建一个非 oracle.Dialector 的 mock
+		db := &gorm.DB{
+			Config: &gorm.Config{
+				Dialector: &mockDialector{},
+			},
+		}
+		_, err := GetOracleDriver(db)
+		if err == nil {
+			t.Error("expected error when dialector is not oracle.Dialector, got nil")
+		}
+	})
+
+	t.Run("returns error when connection is not enumNormalizeDriver", func(t *testing.T) {
+		// 创建一个非 enumNormalizeDriver 的连接
+		d := &Dialector{
+			Config: &Config{
+				Conn:  nil,
+				DBVer: "19.0.0.0",
+			},
+		}
+		db := &gorm.DB{
+			Config: &gorm.Config{
+				Dialector: d,
+			},
+		}
+		_, err := GetOracleDriver(db)
+		if err == nil {
+			t.Error("expected error when connection is not enumNormalizeDriver, got nil")
+		}
+	})
+
+	// 注意：完整测试需要真实的数据库连接，见 tests/version_detection_test.go
+	// 这里只测试错误场景
+}
+
+// mockDialector 用于测试非 oracle.Dialector 场景
+type mockDialector struct{}
+
+func (m *mockDialector) Name() string                                          { return "mock" }
+func (m *mockDialector) Initialize(*gorm.DB) error                             { return nil }
+func (m *mockDialector) Migrator(*gorm.DB) gorm.Migrator                       { return nil }
+func (m *mockDialector) DataTypeOf(*schema.Field) string                       { return "" }
+func (m *mockDialector) DefaultValueOf(*schema.Field) clause.Expression        { return clause.Expr{} }
+func (m *mockDialector) BindVarTo(clause.Writer, *gorm.Statement, interface{}) {}
+func (m *mockDialector) QuoteTo(clause.Writer, string)                         {}
+func (m *mockDialector) Explain(sql string, vars ...interface{}) string        { return sql }
+
+// TestGetDBConnector 验证 GetDBConn 返回底层 *sql.DB
+// P1-7: 实现 GetDBConn 方法以支持通过 GORM API 获取底层连接
+func TestGetDBConnector(t *testing.T) {
+	// 测试场景 1: Conn 字段为 nil
+	t.Run("returns error when Conn is nil", func(t *testing.T) {
+		d := &Dialector{
+			Config: &Config{
+				Conn:  nil,
+				DBVer: "19.0.0.0",
+			},
+		}
+
+		_, err := d.GetDBConn()
+		if err == nil {
+			t.Error("expected error when Conn is nil, got nil")
+		}
+		if !strings.Contains(err.Error(), "connection pool") {
+			t.Errorf("error message %q should mention connection pool", err.Error())
+		}
+	})
+
+	// 测试场景 2: Conn 字段不是 *sql.DB
+	t.Run("returns error when Conn is not *sql.DB", func(t *testing.T) {
+		// 使用一个 mock 对象（不是 *sql.DB）
+		mockConn := struct{ gorm.ConnPool }{}
+
+		d := &Dialector{
+			Config: &Config{
+				Conn:  mockConn,
+				DBVer: "19.0.0.0",
+			},
+		}
+
+		_, err := d.GetDBConn()
+		if err == nil {
+			t.Error("expected error when Conn is not *sql.DB, got nil")
+		}
+		if !strings.Contains(err.Error(), "*sql.DB") {
+			t.Errorf("error message %q should mention *sql.DB", err.Error())
+		}
+	})
+
+	// 测试场景 3: Conn 字段为 *sql.DB（需要真实连接，仅验证类型）
+	t.Run("returns *sql.DB when Conn is *sql.DB", func(t *testing.T) {
+		// 创建一个真实的 sql.DB（使用空的 DSN，不实际连接）
+		// 注意：这里使用 sql.Open 创建一个未验证的连接池
+		db, err := sql.Open("oracle", "")
+		if err != nil {
+			t.Skipf("failed to open sql.DB: %v", err)
+		}
+		defer func() {
+			_ = db.Close()
+		}()
+
+		d := &Dialector{
+			Config: &Config{
+				Conn:  db,
+				DBVer: "19.0.0.0",
+			},
+		}
+
+		got, err := d.GetDBConn()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if got != db {
+			t.Error("GetDBConn should return the same *sql.DB instance")
+		}
+	})
 }

@@ -104,6 +104,7 @@ func TestMigratorHasColumn(t *testing.T) {
 }
 
 // TestMigratorCreateConstraint 测试创建约束
+// 断言：AutoMigrate 后外键约束真实存在（GORM 默认名 fk_<表>_<字段>，Oracle 存储为大写）
 func TestMigratorCreateConstraint(t *testing.T) {
 	type ParentModel struct {
 		ID uint `gorm:"primaryKey"`
@@ -121,13 +122,14 @@ func TestMigratorCreateConstraint(t *testing.T) {
 	}
 	defer func() { _ = DB.Migrator().DropTable(&ChildModel{}, &ParentModel{}) }()
 
-	// 验证约束存在
-	if !DB.Migrator().HasConstraint(&ChildModel{}, "fk_child_parent") {
-		t.Log("Constraint may have different name, checking if foreign key works")
+	// 验证外键约束已创建
+	if !DB.Migrator().HasConstraint(&ChildModel{}, "FK_CHILD_MODELS_PARENT") {
+		t.Error("expected foreign key constraint FK_CHILD_MODELS_PARENT to exist after AutoMigrate")
 	}
 }
 
 // TestMigratorDropConstraint 测试删除约束
+// 断言：删除前约束存在，删除后约束不存在
 func TestMigratorDropConstraint(t *testing.T) {
 	type ParentModel2 struct {
 		ID uint `gorm:"primaryKey"`
@@ -145,11 +147,24 @@ func TestMigratorDropConstraint(t *testing.T) {
 	}
 	defer func() { _ = DB.Migrator().DropTable(&ChildModel2{}, &ParentModel2{}) }()
 
-	// 尝试删除约束（可能不存在，忽略错误）
-	_ = DB.Migrator().DropConstraint(&ChildModel2{}, "fk_child_model2_parent")
+	// 先确认约束存在
+	if !DB.Migrator().HasConstraint(&ChildModel2{}, "FK_CHILD_MODEL2_PARENT") {
+		t.Fatal("expected foreign key constraint FK_CHILD_MODEL2_PARENT to exist before drop")
+	}
+
+	// 删除约束
+	if err := DB.Migrator().DropConstraint(&ChildModel2{}, "FK_CHILD_MODEL2_PARENT"); err != nil {
+		t.Fatalf("failed to drop constraint: %v", err)
+	}
+
+	// 验证约束已删除
+	if DB.Migrator().HasConstraint(&ChildModel2{}, "FK_CHILD_MODEL2_PARENT") {
+		t.Error("constraint FK_CHILD_MODEL2_PARENT should not exist after drop")
+	}
 }
 
 // TestMigratorHasConstraint 测试检查约束是否存在
+// 断言：AutoMigrate 创建外键后 HasConstraint 返回 true
 func TestMigratorHasConstraint(t *testing.T) {
 	type ParentModel3 struct {
 		ID uint `gorm:"primaryKey"`
@@ -167,9 +182,10 @@ func TestMigratorHasConstraint(t *testing.T) {
 	}
 	defer func() { _ = DB.Migrator().DropTable(&ChildModel3{}, &ParentModel3{}) }()
 
-	// 检查约束（名称可能不同）
-	exists := DB.Migrator().HasConstraint(&ChildModel3{}, "fk_child_model3_parent")
-	t.Logf("Constraint exists: %v", exists)
+	// AutoMigrate 后外键约束应存在
+	if !DB.Migrator().HasConstraint(&ChildModel3{}, "FK_CHILD_MODEL3_PARENT") {
+		t.Error("expected foreign key constraint FK_CHILD_MODEL3_PARENT to exist")
+	}
 }
 
 // TestMigratorDropIndex 测试删除索引

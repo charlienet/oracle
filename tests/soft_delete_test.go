@@ -9,19 +9,19 @@ import (
 
 // 测试模型定义
 type SoftDeleteModel struct {
-	ID        uint           `gorm:"primaryKey;autoIncrement"`
+	ID        uint `gorm:"primaryKey;autoIncrement"`
 	Name      string
 	DeletedAt gorm.DeletedAt `gorm:"index:idx_sd_del"`
 }
 
 type TimeFieldModel struct {
-	ID        uint           `gorm:"primaryKey;autoIncrement"`
+	ID        uint `gorm:"primaryKey;autoIncrement"`
 	Name      string
 	DeletedAt gorm.DeletedAt // 使用 gorm.DeletedAt 类型以触发软删除
 }
 
 type NormalModel struct {
-	ID        uint      `gorm:"primaryKey;autoIncrement"`
+	ID        uint `gorm:"primaryKey;autoIncrement"`
 	Name      string
 	CreatedAt time.Time
 }

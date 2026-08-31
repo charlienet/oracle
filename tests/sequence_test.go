@@ -43,7 +43,7 @@ func TestAutoIncrementViaSequence(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 连续插入两条，验证 ID 递增（证明序列工作）
 	u1 := User{Name: "Seq 1", Email: "seq1@example.com", Age: 1}
@@ -190,12 +190,18 @@ func TestSequenceDefaultViaAutoMigrate(t *testing.T) {
 
 	// 验证序列默认值触发器已创建（命名 SEQDEF_TRG_<table>_<column>，
 	// 避免与 autoIncrement 的 TRG_TEST_SEQ_DEF 冲突）
-	var trigCount int64
-	if err := DB.Raw("SELECT COUNT(*) FROM USER_TRIGGERS WHERE TRIGGER_NAME = ?", "SEQDEF_TRG_TEST_SEQ_DEF_CODE").Scan(&trigCount).Error; err != nil {
-		t.Fatalf("failed to query trigger: %v", err)
-	}
-	if trigCount == 0 {
-		t.Error("expected sequence default trigger SEQDEF_TRG_TEST_SEQ_DEF_CODE to exist")
+	// 注意：只有 11g 需要触发器，12c+ 直接在 DEFAULT 子句中使用序列
+	dbVer := getDBVersion()
+	if dbVer < 12 {
+		var trigCount int64
+		if err := DB.Raw("SELECT COUNT(*) FROM USER_TRIGGERS WHERE TRIGGER_NAME = ?", "SEQDEF_TRG_TEST_SEQ_DEF_CODE").Scan(&trigCount).Error; err != nil {
+			t.Fatalf("failed to query trigger: %v", err)
+		}
+		if trigCount == 0 {
+			t.Error("expected sequence default trigger SEQDEF_TRG_TEST_SEQ_DEF_CODE to exist")
+		}
+	} else {
+		t.Log("12c+ does not require trigger for sequence default value")
 	}
 
 	// 插入时不给 Code（字段在 FieldsWithDefaultDBValue 中，GORM 省略该列），

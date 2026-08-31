@@ -98,8 +98,8 @@ func TestDeleteExistingSQL(t *testing.T) {
 
 // softDeleteModelWithDefault 含软删除字段与默认值字段
 type softDeleteModelWithDefault struct {
-	ID        uint           `gorm:"primaryKey"`
-	Name      string         `gorm:"default:unknown"`
+	ID        uint   `gorm:"primaryKey"`
+	Name      string `gorm:"default:unknown"`
 	DeletedAt gorm.DeletedAt
 }
 
@@ -146,8 +146,8 @@ func TestDeleteHardWithDefaultValues(t *testing.T) {
 
 // plainModelWithPK 多主键模型
 type plainModelMultiPK struct {
-	ID1 uint `gorm:"primaryKey"`
-	ID2 uint `gorm:"primaryKey"`
+	ID1  uint `gorm:"primaryKey"`
+	ID2  uint `gorm:"primaryKey"`
 	Name string
 }
 
@@ -166,5 +166,72 @@ func TestDeleteMultiPK(t *testing.T) {
 	sql := db.Statement.SQL.String()
 	if !strings.Contains(sql, "DELETE FROM") {
 		t.Errorf("multi-pk delete SQL %q missing DELETE FROM", sql)
+	}
+}
+
+// TestDeleteSoft_DestNotModel 验证 Dest != Model 时的额外 WHERE 条件
+// P1-6: 修复软删除路径中 stmt.Dest != stmt.Model 的情况
+func TestDeleteSoft_DestNotModel(t *testing.T) {
+	// 场景：通过设置 Model 字段来模拟 Dest != Model 的情况
+	// 参考 GORM 官方 callbacks/delete.go:139-146 的实现
+	model := &softDeleteModel{ID: 1}
+	db := newTestDB(t, model)
+
+	// 模拟 Dest != Model 的场景：设置 Model 字段
+	// 在 GORM 中，当执行 db.Delete(&User{}, id) 时：
+	// - stmt.Dest 是 id
+	// - stmt.Model 是 &User{}（通过 db.Model() 设置）
+	// - stmt.ReflectValue 是空的 User{}
+	db.Statement.Model = &softDeleteModel{ID: 100} // 设置 Model 为不同的实例
+
+	Delete(db)
+
+	if db.Error != nil {
+		t.Fatalf("Delete returned error: %v", db.Error)
+	}
+
+	// 验证软删除生成了 UPDATE 语句
+	sql := db.Statement.SQL.String()
+	t.Logf("Generated SQL: %s", sql)
+	if !strings.Contains(sql, "UPDATE") {
+		t.Errorf("soft delete SQL %q missing UPDATE", sql)
+	}
+	if !strings.Contains(sql, "SET deleted_at") {
+		t.Errorf("soft delete SQL %q missing SET deleted_at", sql)
+	}
+	// 验证 WHERE 条件存在
+	if !strings.Contains(sql, "WHERE") {
+		t.Errorf("soft delete SQL %q missing WHERE clause", sql)
+	}
+	// 不应包含 DELETE FROM（这是软删除，不是硬删除）
+	if strings.Contains(sql, "DELETE FROM") {
+		t.Errorf("soft delete SQL %q should not contain DELETE FROM", sql)
+	}
+}
+
+// TestDeleteHard_DestNotModel 验证硬删除路径中 Dest != Model 的处理
+func TestDeleteHard_DestNotModel(t *testing.T) {
+	model := &plainModel{ID: 1}
+	db := newTestDB(t, model)
+	db.Statement.Unscoped = true
+
+	// 模拟 Dest != Model 的场景：设置 Model 字段
+	db.Statement.Model = &plainModel{ID: 100}
+
+	Delete(db)
+
+	if db.Error != nil {
+		t.Fatalf("Delete returned error: %v", db.Error)
+	}
+
+	// 验证硬删除生成了 DELETE 语句
+	sql := db.Statement.SQL.String()
+	t.Logf("Generated SQL: %s", sql)
+	if !strings.Contains(sql, "DELETE FROM") {
+		t.Errorf("hard delete SQL %q missing DELETE FROM", sql)
+	}
+	// 验证 WHERE 条件存在
+	if !strings.Contains(sql, "WHERE") {
+		t.Errorf("hard delete SQL %q missing WHERE clause", sql)
 	}
 }

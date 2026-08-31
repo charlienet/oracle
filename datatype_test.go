@@ -10,10 +10,14 @@ import (
 
 func TestDataTypeOfFullMatrix(t *testing.T) {
 	d11 := newTestDialector("11.2.0.2.0", 1024)
-	d12 := newTestDialector("12.1.0.2.0", 1024)
+	d12 := newTestDialector("12.1.0.2.0", 1024) // 不设 MaxStringSize，保持零值 Unknown 态（未探测）
 	d19 := newTestDialector("19.0.0.0.0", 1024)
 	d21 := newTestDialector("21.0.0.0.0", 1024)
 	dEmpty := newTestDialector("", 1024) // 探测失败降级
+	// MAX_STRING_SIZE 三态 dialector：STANDARD / EXTENDED / 未探测（Unknown，即 d12）
+	d12Std := newTestDialectorWithMaxStringSize("12.1.0.2.0", 1024, MaxStringSizeStandard)
+	d12Ext := newTestDialectorWithMaxStringSize("12.1.0.2.0", 1024, MaxStringSizeExtended)
+	d12Unknown := d12 // 12c 版本 + 不设 MaxStringSize（零值 Unknown，与 d12 等价）
 
 	tests := []struct {
 		name      string
@@ -72,11 +76,11 @@ func TestDataTypeOfFullMatrix(t *testing.T) {
 			f.DataType = schema.String
 			f.Size = 0
 		}, "VARCHAR2(1024)"},
-		{"string size=2000 → CLOB (2000~4000 区间)", d12, func(f *schema.Field) {
+		{"string size=2000 → VARCHAR2(2000) (12c 32k)", d12, func(f *schema.Field) {
 			f.DataType = schema.String
 			f.Size = 2000
-		}, "CLOB"},
-		{"string size=4096 12c → VARCHAR2(4096)", d12, func(f *schema.Field) {
+		}, "VARCHAR2(2000)"},
+		{"string size=4096 12c EXTENDED → VARCHAR2(4096)", d12Ext, func(f *schema.Field) {
 			f.DataType = schema.String
 			f.Size = 4096
 		}, "VARCHAR2(4096)"},
@@ -84,10 +88,18 @@ func TestDataTypeOfFullMatrix(t *testing.T) {
 			f.DataType = schema.String
 			f.Size = 4096
 		}, "CLOB"},
-		{"string size=5000 12c → VARCHAR2(5000)", d12, func(f *schema.Field) {
+		{"string size=5000 12c EXTENDED → VARCHAR2(5000)", d12Ext, func(f *schema.Field) {
 			f.DataType = schema.String
 			f.Size = 5000
 		}, "VARCHAR2(5000)"},
+		{"string size=5000 12c STANDARD → CLOB", d12Std, func(f *schema.Field) {
+			f.DataType = schema.String
+			f.Size = 5000
+		}, "CLOB"},
+		{"string size=5000 12c 未探测 → CLOB（保守）", d12Unknown, func(f *schema.Field) {
+			f.DataType = schema.String
+			f.Size = 5000
+		}, "CLOB"},
 		{"string size=5000 11g → CLOB", d11, func(f *schema.Field) {
 			f.DataType = schema.String
 			f.Size = 5000
@@ -135,6 +147,31 @@ func TestDataTypeOfFullMatrix(t *testing.T) {
 			got := tt.dialector.DataTypeOf(f)
 			if got != tt.want {
 				t.Errorf("DataTypeOf() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestExtendedStringLimit 验证 VARCHAR2 大小上限的判定：
+// 版本允许（12c+）且探测到 EXTENDED → 32767；其余（11g、未探测、STANDARD）→ 4000
+func TestExtendedStringLimit(t *testing.T) {
+	tests := []struct {
+		name      string
+		dialector *Dialector
+		want      int
+	}{
+		{"11g → 4000", newTestDialector("11.2.0.2.0", 1024), 4000},
+		{"12c 未探测(Unknown) → 4000", newTestDialector("12.1.0.2.0", 1024), 4000},
+		{"12c STANDARD → 4000", newTestDialectorWithMaxStringSize("12.1.0.2.0", 1024, MaxStringSizeStandard), 4000},
+		{"12c EXTENDED → 32767", newTestDialectorWithMaxStringSize("12.1.0.2.0", 1024, MaxStringSizeExtended), 32767},
+		{"19c EXTENDED → 32767", newTestDialectorWithMaxStringSize("19.0.0.0.0", 1024, MaxStringSizeExtended), 32767},
+		{"Config 为 nil → 4000（防御）", &Dialector{Config: nil}, 4000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.dialector.extendedStringLimit(); got != tt.want {
+				t.Errorf("extendedStringLimit() = %d, want %d", got, tt.want)
 			}
 		})
 	}

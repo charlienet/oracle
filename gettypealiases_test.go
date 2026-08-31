@@ -11,9 +11,9 @@ func TestGetTypeAliases(t *testing.T) {
 	m := Migrator{Migrator: migrator.Migrator{}}
 
 	tests := []struct {
-		name string
+		name   string
 		dbType string
-		want []string
+		want   []string
 	}{
 		{"number reports integer alias", "number", []string{"integer", "smallint"}},
 		{"NUMBER uppercase", "NUMBER", []string{"integer", "smallint"}},

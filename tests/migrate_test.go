@@ -61,7 +61,8 @@ func TestDropTable(t *testing.T) {
 	}
 }
 
-// BigStringModel 验证 11g 下 size>4000 的 string 字段映射为 CLOB 列
+// BigStringModel 验证 MAX_STRING_SIZE=STANDARD（或未探测到 EXTENDED）时
+// size>4000 的 string 字段映射为 CLOB 列
 type BigStringModel struct {
 	ID  uint   `gorm:"column:id;primaryKey"`
 	Big string `gorm:"column:big;size:5000"`
@@ -71,10 +72,11 @@ func (BigStringModel) TableName() string {
 	return "TEST_BIG_STRING"
 }
 
-// TestBigStringMapsToCLOBOn11g 验证 11g 下 size>4000 的 string 字段：
-// DataTypeOf 的 32k VARCHAR2 特性（12c+ 才支持）在 11g 不触发，
-// 字段应建为 CLOB，且能正常插入超过 4000 字节的长文本。
-func TestBigStringMapsToCLOBOn11g(t *testing.T) {
+// TestBigStringMapsToCLOBOnStandard 验证无论数据库版本，当 MAX_STRING_SIZE=STANDARD
+// （或未探测到 EXTENDED）时，size>4000 的 string 字段：
+// DataTypeOf 的 32k VARCHAR2 特性不会生效（extendedStringLimit 回落到 4000），
+// 字段应建为 CLOB，且能正常插入回读 5000 字符长文本。
+func TestBigStringMapsToCLOBOnStandard(t *testing.T) {
 	if err := DB.AutoMigrate(&BigStringModel{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
@@ -89,7 +91,7 @@ func TestBigStringMapsToCLOBOn11g(t *testing.T) {
 		t.Fatalf("failed to query column type: %v", err)
 	}
 	if dataType != "CLOB" {
-		t.Errorf("expected column type CLOB on 11g, got %q", dataType)
+		t.Errorf("expected column type CLOB on STANDARD, got %q", dataType)
 	}
 
 	// 插入超过 4000 字节的长文本，验证 CLOB 列可容纳

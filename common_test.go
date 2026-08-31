@@ -264,7 +264,7 @@ func TestSoftDeleteFieldDetection(t *testing.T) {
 		DeletedAt gorm.DeletedAt
 	}
 	sch1 := parseTestSchema(t, &Model1{})
-	
+
 	// 验证能正确检测到软删除字段
 	var softDeleteField1 *schema.Field
 	for _, field := range sch1.Fields {
@@ -290,7 +290,7 @@ func TestSoftDeleteFieldDetection(t *testing.T) {
 		DeletedAt time.Time
 	}
 	sch2 := parseTestSchema(t, &Model2{})
-	
+
 	// 验证能正确检测到软删除字段
 	var softDeleteField2 *schema.Field
 	for _, field := range sch2.Fields {
@@ -316,7 +316,7 @@ func TestSoftDeleteFieldDetection(t *testing.T) {
 		CreatedAt time.Time
 	}
 	sch3 := parseTestSchema(t, &Model3{})
-	
+
 	// 验证不会误判为软删除字段
 	var softDeleteField3 *schema.Field
 	for _, field := range sch3.Fields {

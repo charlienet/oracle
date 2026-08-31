@@ -38,14 +38,14 @@ func (c *mockConn) Prepare(query string) (driver.Stmt, error) {
 	return &mockStmtForConn{}, nil
 }
 
-func (c *mockConn) Close() error                       { return c.closeErr }
+func (c *mockConn) Close() error { return c.closeErr }
 func (c *mockConn) Begin() (driver.Tx, error) {
 	if c.beginErr != nil {
 		return nil, c.beginErr
 	}
 	return &mockTx{}, nil
-} //nolint:staticcheck
-func (c *mockConn) Ping(ctx context.Context) error     { return c.pingErr }
+}                                                          //nolint:staticcheck
+func (c *mockConn) Ping(ctx context.Context) error         { return c.pingErr }
 func (c *mockConn) ResetSession(ctx context.Context) error { return c.resetErr }
 
 func (c *mockConn) CheckNamedValue(nv *driver.NamedValue) error {
@@ -88,9 +88,9 @@ type mockStmtForConn struct {
 	checkNVCalled bool
 }
 
-func (s *mockStmtForConn) Close() error  { return s.closeErr }
-func (s *mockStmtForConn) NumInput() int { return s.numInput }
-func (s *mockStmtForConn) Exec(args []driver.Value) (driver.Result, error) { return nil, s.execErr } //nolint:staticcheck
+func (s *mockStmtForConn) Close() error                                    { return s.closeErr }
+func (s *mockStmtForConn) NumInput() int                                   { return s.numInput }
+func (s *mockStmtForConn) Exec(args []driver.Value) (driver.Result, error) { return nil, s.execErr }  //nolint:staticcheck
 func (s *mockStmtForConn) Query(args []driver.Value) (driver.Rows, error)  { return nil, s.queryErr } //nolint:staticcheck
 
 func (s *mockStmtForConn) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {

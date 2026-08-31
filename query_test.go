@@ -45,9 +45,11 @@ func TestPatchUpperDBNameKeysConcurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 100 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			patchUpperDBNameKeys(sch)
-		})
+		}()
 	}
 	wg.Wait()
 
@@ -196,9 +198,9 @@ func TestSetFieldValue(t *testing.T) {
 
 func TestFindSchemaFieldByStructFieldFast(t *testing.T) {
 	type TestModel struct {
-		ID     uint   `gorm:"column:id"`
-		Name   string `gorm:"column:name"`
-		Email  string `gorm:"column:email"`
+		ID    uint   `gorm:"column:id"`
+		Name  string `gorm:"column:name"`
+		Email string `gorm:"column:email"`
 	}
 
 	sch := parseTestSchema(t, &TestModel{})

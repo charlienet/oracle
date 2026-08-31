@@ -332,7 +332,7 @@ func TestSkipDefaultTransactionBatchAtomicity(t *testing.T) {
 		t.Skip("ORACLE_DSN 未设置，跳过 PrepareStmt 集成测试")
 	}
 	db, err := gorm.Open(oracle.Open(dsn), &gorm.Config{
-		PrepareStmt:           true,
+		PrepareStmt:            true,
 		SkipDefaultTransaction: true,
 	})
 	if err != nil {

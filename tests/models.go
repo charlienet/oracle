@@ -8,14 +8,19 @@ import (
 
 // User 基本测试模型
 type User struct {
-	ID        uint           `gorm:"column:id;primaryKey;autoIncrement"`
-	Name      string         `gorm:"size:100;not null"`
-	Email     string         `gorm:"size:200;uniqueIndex"`
-	Age       int            `gorm:"default:0"`
-	Active    bool           // 不使用 default，以便显式设置 false 时能正确存储
+	ID        uint   `gorm:"column:id;primaryKey;autoIncrement"`
+	Name      string `gorm:"size:100;not null"`
+	Email     string `gorm:"size:200;uniqueIndex"`
+	Age       int    `gorm:"default:0"`
+	Active    bool   // 不使用 default，以便显式设置 false 时能正确存储
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`
+
+	// 关联关系
+	Profile Profile `gorm:"foreignKey:UserID"` // HasOne
+	Orders  []Order `gorm:"foreignKey:UserID"` // HasMany
+	Roles   []Role  `gorm:"many2many:user_roles"`
 }
 
 func (User) TableName() string {
@@ -38,11 +43,15 @@ func (Product) TableName() string {
 
 // Order 测试关联关系
 type Order struct {
-	ID        uint      `gorm:"column:id;primaryKey;autoIncrement"`
-	UserID    uint      `gorm:"not null;index"`
-	User      User      `gorm:"foreignKey:UserID"`
-	Total     float64   `gorm:"precision:12;scale:2"`
-	Status    string    `gorm:"size:20;default:'pending'"`
+	ID uint `gorm:"column:id;primaryKey;autoIncrement"`
+	// UserID 必须可空：GORM 的 Association.Replace/Delete/Clear 解除 HasMany 关联时
+	// 会执行 UPDATE ... SET USER_ID = NULL 置外键 NULL 解绑（标准语义），
+	// 若此处标 not null，Oracle 会报 ORA-01407 无法置 NULL，导致相关集成测试失败。
+	// 仅保留 index 索引，去掉 not null 约束。
+	UserID    uint    `gorm:"index"`
+	User      User    `gorm:"foreignKey:UserID"`
+	Total     float64 `gorm:"precision:12;scale:2"`
+	Status    string  `gorm:"size:20;default:'pending'"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -106,4 +115,25 @@ type Merchant struct {
 
 func (Merchant) TableName() string {
 	return "TEST_MERCHANTS"
+}
+
+// Profile 用户档案（HasOne 关联）
+type Profile struct {
+	ID     uint   `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID uint   `gorm:"uniqueIndex"`
+	Bio    string `gorm:"size:500"`
+}
+
+func (Profile) TableName() string {
+	return "TEST_PROFILES"
+}
+
+// Role 角色（Many2Many 关联）
+type Role struct {
+	ID   uint   `gorm:"column:id;primaryKey;autoIncrement"`
+	Name string `gorm:"size:50;not null"`
+}
+
+func (Role) TableName() string {
+	return "TEST_ROLES"
 }

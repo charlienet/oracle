@@ -9,7 +9,7 @@ func TestDeleteSingle(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 创建测试数据
 	user := User{Name: "Delete Test", Email: "delete@example.com", Age: 40}
@@ -34,7 +34,7 @@ func TestDeleteWithoutWhere(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 测试无 WHERE 条件的删除应该失败
 	result := DB.Delete(&User{})
@@ -49,7 +49,7 @@ func TestHardDelete(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 创建测试数据
 	user := User{Name: "Hard Delete", Email: "hard@example.com", Age: 50}

@@ -9,7 +9,7 @@ func TestUpdateSingle(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 创建测试数据
 	user := User{Name: "Update Test", Email: "update@example.com", Age: 30}
@@ -38,7 +38,7 @@ func TestUpdateMultiple(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 创建测试数据
 	users := []User{
@@ -63,7 +63,7 @@ func TestUpdateWithoutWhere(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 测试无 WHERE 条件的更新应该失败
 	result := DB.Model(&User{}).Update("age", 99)

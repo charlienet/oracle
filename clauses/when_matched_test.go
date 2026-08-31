@@ -109,7 +109,7 @@ func TestWhenMatchedBuildWithExcludedAlias(t *testing.T) {
 	}
 
 	sql := buildSQL(t, w)
-	
+
 	// 验证 excluded 别名被正确替换为 exclude
 	if strings.Contains(sql, `"excluded"."name`) || strings.Contains(sql, `excluded."name`) {
 		t.Errorf("WhenMatched SQL should not contain 'excluded' alias, got %q", sql)
@@ -117,7 +117,7 @@ func TestWhenMatchedBuildWithExcludedAlias(t *testing.T) {
 	if strings.Contains(sql, `"excluded"."age`) || strings.Contains(sql, `excluded."age`) {
 		t.Errorf("WhenMatched SQL should not contain 'excluded' alias, got %q", sql)
 	}
-	
+
 	// 验证使用了正确的 exclude 别名 (测试实际输出格式)
 	if !strings.Contains(sql, "exclude.name") {
 		t.Errorf("WhenMatched SQL should contain 'exclude.name', got %q", sql)
@@ -135,7 +135,7 @@ func TestWhenMatchedBuildWithExcludedExpr(t *testing.T) {
 	}
 
 	sql := buildSQL(t, w)
-	
+
 	// 验证 excluded 被替换为 exclude
 	if strings.Contains(sql, "excluded.") {
 		t.Errorf("WhenMatched SQL should not contain 'excluded.' alias, got %q", sql)

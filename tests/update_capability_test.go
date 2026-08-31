@@ -62,7 +62,7 @@ func TestUpdateSubQueryIntegration(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	u1 := User{Name: "sub1", Email: "sub1@example.com", Age: 5}
 	u2 := User{Name: "sub2", Email: "sub2@example.com", Age: 10}
@@ -91,7 +91,7 @@ func TestUpdateOmitIntegration(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	u := User{Name: "旧名", Email: "omit@example.com", Age: 1}
 	if err := DB.Create(&u).Error; err != nil {
@@ -156,7 +156,7 @@ func TestUpdateInTransactionCommitAndRollback(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	u := User{Name: "tx1", Email: "tx1@example.com", Age: 1}
 	if err := DB.Create(&u).Error; err != nil {
@@ -218,7 +218,7 @@ func TestUpdateSelfManagedTxRollbackOnError(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	u1 := User{Name: "u1", Email: "u1@example.com", Age: 1}
 	u2 := User{Name: "u2", Email: "u2@example.com", Age: 2}
@@ -251,7 +251,7 @@ func TestPrepareStmtUpdateInTransactionRollback(t *testing.T) {
 	if err := db.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	u := User{Name: "prep-tx", Email: "prep-tx@example.com", Age: 7}
 	if err := db.Create(&u).Error; err != nil {

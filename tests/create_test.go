@@ -10,7 +10,7 @@ func TestCreateSingle(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	user := User{
 		Name:   "Test User",
@@ -35,7 +35,7 @@ func TestCreateBatch(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	users := []User{
 		{Name: "User 1", Email: "user1@example.com", Age: 20},
@@ -86,12 +86,12 @@ func TestCreateWithTimestamp(t *testing.T) {
 func TestBatchInsertWithReturning(t *testing.T) {
 	// 测试批量插入 + RETURNING INTO 场景
 	// 验证 Vars 不会覆盖输出参数
-	
+
 	// 1. 创建测试表（带自增主键）
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 2. 批量插入多条记录
 	users := []User{

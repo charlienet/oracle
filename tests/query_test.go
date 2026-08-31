@@ -9,7 +9,7 @@ func TestQuerySingle(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 创建测试数据
 	user := User{Name: "Query Test", Email: "query@example.com", Age: 35}
@@ -32,7 +32,7 @@ func TestQueryWithConditions(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 创建测试数据
 	users := []User{
@@ -59,7 +59,7 @@ func TestQueryWithLimit(t *testing.T) {
 	if err := DB.AutoMigrate(&User{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	clearTable(t, "TEST_USERS")
+	clearUserTables(t)
 
 	// 创建测试数据
 	for i := range 10 {
