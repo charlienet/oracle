@@ -1,6 +1,5 @@
 .idea
 vendor/
 *.out
-CHANGELOG.md
 /test_local/
 /go.work*
