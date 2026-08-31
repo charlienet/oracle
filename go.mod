@@ -1,4 +1,4 @@
-module github.com/charlienet/oracle
+module github.com/charlienet/go-oracle
 
 go 1.22
 

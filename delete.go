@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm/clause"
 	gormSchema "gorm.io/gorm/schema"
 
-	"github.com/charlienet/oracle/utils"
+	"github.com/charlienet/go-oracle/utils"
 )
 
 func Delete(db *gorm.DB) {

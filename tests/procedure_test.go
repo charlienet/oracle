@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
-	oracle "github.com/charlienet/oracle"
+	oracle "github.com/charlienet/go-oracle"
 	"github.com/sijms/go-ora/v2"
 )
 

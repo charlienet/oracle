@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	oracle "github.com/charlienet/oracle"
+	oracle "github.com/charlienet/go-oracle"
 )
 
 // TestGetTables 验证 GetTables 返回当前用户的表列表（Oracle 数据字典 USER_TABLES）

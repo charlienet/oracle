@@ -34,7 +34,7 @@
 ## 安装
 
 ```bash
-go get github.com/charlienet/oracle
+go get github.com/charlienet/go-oracle
 ```
 
 ## 快速开始
@@ -43,7 +43,7 @@ go get github.com/charlienet/oracle
 import (
     "gorm.io/gorm"
 
-    oracle "github.com/charlienet/oracle"
+    oracle "github.com/charlienet/go-oracle"
 )
 
 func main() {
@@ -79,8 +79,8 @@ oracle://user:password@host:port/service?SSL=false&CONNECTION TIMEOUT=90&SOCKET 
 import (
     "gorm.io/gorm"
 
-    oracle "github.com/charlienet/oracle"
-    "github.com/charlienet/oracle/driver_adapter"
+    oracle "github.com/charlienet/go-oracle"
+    "github.com/charlienet/go-oracle/driver_adapter"
 )
 
 db, err := gorm.Open(oracle.New(oracle.Config{

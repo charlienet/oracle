@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	oracle "github.com/charlienet/oracle"
+	oracle "github.com/charlienet/go-oracle"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

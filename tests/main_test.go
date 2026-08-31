@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
-	oracle "github.com/charlienet/oracle"
+	oracle "github.com/charlienet/go-oracle"
 )
 
 var DB *gorm.DB

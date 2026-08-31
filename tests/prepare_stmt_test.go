@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	oracle "github.com/charlienet/oracle"
+	oracle "github.com/charlienet/go-oracle"
 )
 
 // 本文件验证 C-1 缺陷修复：PrepareStmt 模式下写回调（Create/Update/Delete）

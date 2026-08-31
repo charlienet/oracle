@@ -216,7 +216,7 @@ db.Create(&users)
 
 ```go
 import (
-    oracle "github.com/charlienet/oracle"
+    oracle "github.com/charlienet/go-oracle"
 )
 
 // OUT 参数

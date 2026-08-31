@@ -23,9 +23,9 @@ import (
 	"gorm.io/gorm/migrator"
 	"gorm.io/gorm/schema"
 
-	"github.com/charlienet/oracle/clauses"
-	"github.com/charlienet/oracle/driver_adapter"
-	oracleUtils "github.com/charlienet/oracle/utils"
+	"github.com/charlienet/go-oracle/clauses"
+	"github.com/charlienet/go-oracle/driver_adapter"
+	oracleUtils "github.com/charlienet/go-oracle/utils"
 )
 
 const RowNumberAliasForOracle11 = "ROW_NUM"

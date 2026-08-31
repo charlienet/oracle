@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	oracle "github.com/charlienet/oracle"
+	oracle "github.com/charlienet/go-oracle"
 )
 
 // TestVersionDetection 验证驱动在会话建立时自动执行的版本检测：
